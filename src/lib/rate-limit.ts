@@ -176,3 +176,44 @@ export function resetRateLimit(identifier?: string): void {
     totalBlockedRequests = 0;
   }
 }
+
+/**
+ * Simulate a burst of requests against the limiter for a single identifier.
+ *
+ * Used by the burst tests (and the Wave k6 scenario) to assert that a burst
+ * of `count` requests yields exactly `maxRequests` allowed responses followed
+ * by `429`-worthy blocks, with consistent `RateLimit-*` headers on every
+ * response.  This is a thin wrapper over `checkRateLimit` — it does not
+ * introduce a parallel limiter, it just exercises the existing one.
+ *
+ * Returns one entry per request in order, each carrying the limiter result
+ * and the headers that `POST /api/check` would emit for it.
+ */
+export function simulateBurst(
+  identifier: string,
+  count: number,
+  options?: Partial<RateLimitOptions>
+): Array<{
+  allowed: boolean;
+  retryAfter: number;
+  remaining: number;
+  headers: Record<string, string>;
+}> {
+  const opts = { ...getDefaultOptions(), ...options };
+  const results: Array<{
+    allowed: boolean;
+    retryAfter: number;
+    remaining: number;
+    headers: Record<string, string>;
+  }> = [];
+
+  for (let i = 0; i < count; i++) {
+    const result = checkRateLimit(identifier, opts);
+    results.push({
+      ...result,
+      headers: buildRateLimitHeaders(result, opts.maxRequests),
+    });
+  }
+
+  return results;
+}
