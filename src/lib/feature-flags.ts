@@ -18,6 +18,11 @@ import { prisma } from "@/lib/prisma";
  * DB reads are cached in-process for `FEATURE_FLAGS_CACHE_TTL_MS` (default 30s).
  * Call {@link clearFeatureFlagCache} after writing a flag so the change is
  * visible immediately in the current process.
+ *
+ * Freeze interactions (issue #588): when `freeze_window` is enabled and a
+ * freeze window is active, registration and exports are blocked. Use
+ * {@link getFreezeInteraction} to obtain user-facing copy for the registration
+ * and settings UIs instead of leaving contributors at a dead end.
  */
 
 export type FeatureFlagKey =
@@ -254,4 +259,50 @@ export async function setFeatureFlag(
     update: { enabled, updatedById: updatedById ?? null },
   });
   clearFeatureFlagCache();
+}
+
+/**
+ * Freeze interaction surface (issue #588).
+ *
+ * When `freeze_window` is enabled and a freeze window is active, registration
+ * and exports are blocked. These helpers give the registration and settings
+ * UIs consistent, actionable copy so contributors don't hit a dead end.
+ */
+export type FreezeAffectedSurface = "registration" | "exports";
+
+export interface FreezeInteraction {
+  /** Whether the freeze is currently blocking the given surface. */
+  blocked: boolean;
+  /** Short headline for banners / inline notices. */
+  title: string;
+  /** Actionable body copy explaining why and what to do next. */
+  message: string;
+}
+
+const FREEZE_COPY: Record<FreezeAffectedSurface, { title: string; message: string }> = {
+  registration: {
+    title: "Registration is paused during the freeze window",
+    message:
+      "New registrations are temporarily disabled while the current wave is frozen. Please try again once the freeze window closes.",
+  },
+  exports: {
+    title: "Exports are paused during the freeze window",
+    message:
+      "Data exports are temporarily disabled while the current wave is frozen. Retry once the freeze window closes.",
+  },
+};
+
+/**
+ * Compute the freeze interaction for a surface. `freezeActive` should come from
+ * the existing freeze-window helper; the flag gate is resolved here so callers
+ * only need to pass the window state.
+ */
+export async function getFreezeInteraction(
+  surface: FreezeAffectedSurface,
+  freezeActive: boolean,
+): Promise<FreezeInteraction> {
+  const flagEnabled = await isFeatureEnabled("freeze_window");
+  const blocked = flagEnabled && freezeActive;
+  const copy = FREEZE_COPY[surface];
+  return { blocked, title: copy.title, message: copy.message };
 }
