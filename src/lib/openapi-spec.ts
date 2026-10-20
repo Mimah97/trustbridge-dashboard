@@ -271,6 +271,124 @@ export function generateOpenAPISpec(
           },
         },
       },
+      "/api/badge": {
+        get: {
+          operationId: "getBadge",
+          summary: "Get readiness badge for a Stellar address",
+          tags: ["Badge"],
+          parameters: [
+            {
+              name: "address",
+              in: "query",
+              required: true,
+              schema: { type: "string" },
+              description: "Stellar public key (G-address)",
+            },
+            {
+              name: "format",
+              in: "query",
+              schema: {
+                type: "string",
+                enum: ["json", "svg"],
+                default: "json",
+              },
+              description: "Response format for the badge",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Badge payload (JSON) or rendered SVG badge",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/Badge",
+                  },
+                },
+                "image/svg+xml": {
+                  schema: { type: "string" },
+                },
+              },
+            },
+            "400": {
+              description: "Invalid or missing address parameter",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+            "404": {
+              description: "No badge available for address",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+            "429": {
+              description: "Rate limit exceeded",
+            },
+          },
+        },
+      },
+      "/api/address-history": {
+        get: {
+          operationId: "getAddressHistory",
+          summary: "Get readiness history for a Stellar address",
+          tags: ["Address History"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "address",
+              in: "query",
+              required: true,
+              schema: { type: "string" },
+              description: "Stellar public key (G-address)",
+            },
+            {
+              name: "cursor",
+              in: "query",
+              schema: { type: "string" },
+              description: "Pagination cursor (base64-encoded ID)",
+            },
+            {
+              name: "limit",
+              in: "query",
+              schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+              description: "Number of history entries per page",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Address history entries",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/AddressHistoryList",
+                  },
+                },
+              },
+            },
+            "400": {
+              description: "Invalid or missing address parameter",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+            "401": {
+              description: "Not authenticated",
+            },
+          },
+        },
+      },
       "/api/webhooks/trustbridge-action": {
         post: {
           operationId: "trustbridgeActionWebhook",
@@ -287,331 +405,20 @@ export function generateOpenAPISpec(
             },
           },
           responses: {
-            "202": {
-              description: "Webhook accepted for processing",
+            "200": {
+              description: "Webhook accepted",
             },
             "400": {
-              description: "Unsupported schema version or event type",
+              description: "Invalid webhook payload",
             },
             "401": {
-              description: "Invalid signature or unauthorized request",
-            },
-          },
-        },
-      },
-      "/api/maintainer/ban": {
-        post: {
-          operationId: "manageContributorBan",
-          summary: "Ban or unban a contributor by GitHub username",
-          tags: ["Maintainer"],
-          security: [{ bearerAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: {
-                  $ref: "#/components/schemas/BanRequest",
-                },
-              },
-            },
-          },
-          responses: {
-            "200": {
-              description: "Contributor ban status updated successfully",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/BanResponse",
-                  },
-                },
-              },
-            },
-            "400": {
-              description: "Invalid request (missing githubUsername, invalid action, or missing reason for ban)",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "403": {
-              description: "Forbidden. Maintainer access required.",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "500": {
-              description: "Internal server error executing ban action",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      "/api/registrations/{id}/restore": {
-        post: {
-          operationId: "restoreRegistration",
-          summary: "Restore a soft-deleted contributor registration",
-          tags: ["Registration", "Maintainer"],
-          security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: "id",
-              in: "path",
-              required: true,
-              schema: { type: "string" },
-              description: "ID of the soft-deleted registration to restore",
-            },
-          ],
-          responses: {
-            "200": {
-              description: "Registration restored successfully",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/RestoreRegistrationResponse",
-                  },
-                },
-              },
-            },
-            "403": {
-              description: "Forbidden. Maintainer session required.",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "404": {
-              description: "Deleted registration not found",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "409": {
-              description: "Conflict. Stellar address is already actively registered.",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
+              description: "Invalid webhook signature",
             },
           },
         },
       },
     },
     components: {
-      schemas: {
-        BanRequest: {
-          type: "object",
-          required: ["githubUsername"],
-          properties: {
-            action: {
-              type: "string",
-              enum: ["ban", "unban"],
-              default: "ban",
-              description: "Action to perform: ban or unban",
-            },
-            githubUsername: {
-              type: "string",
-              description: "GitHub handle of the contributor",
-            },
-            reason: {
-              type: "string",
-              description: "Mandatory reason for ban; optional for unban",
-            },
-          },
-        },
-        BanResponse: {
-          type: "object",
-          required: ["success", "message", "details"],
-          properties: {
-            success: { type: "boolean" },
-            message: { type: "string" },
-            details: {
-              type: "object",
-              required: ["githubUsername", "banned"],
-              properties: {
-                githubUsername: { type: "string" },
-                banned: { type: "boolean" },
-                bannedAt: { type: "string", format: "date-time", nullable: true },
-                bannedReason: { type: "string", nullable: true },
-                bannedBy: { type: "string", nullable: true },
-              },
-            },
-          },
-        },
-        RestoreRegistrationResponse: {
-          type: "object",
-          required: ["success", "registration"],
-          properties: {
-            success: { type: "boolean" },
-            registration: {
-              $ref: "#/components/schemas/Registration",
-            },
-          },
-        },
-        ErrorResponse: {
-          type: "object",
-          required: ["error"],
-          properties: {
-            error: { type: "string" },
-          },
-        },
-        Registration: {
-          type: "object",
-          properties: {
-            id: { type: "string" },
-            githubUsername: { type: "string" },
-            stellarAddress: { type: "string" },
-            trustlineReady: { type: "boolean" },
-            trustlineAuthorized: { type: "boolean" },
-            funded: { type: "boolean" },
-            xlmBalance: { type: "string" },
-            spendableXlmBalance: { type: "string" },
-            lastCheckedAt: { type: "string", format: "date-time" },
-            readiness: {
-              type: "string",
-              enum: ["ready", "low_reserve", "not_ready"],
-            },
-          },
-        },
-        RegistrationInput: {
-          type: "object",
-          required: ["stellarAddress"],
-          properties: {
-            stellarAddress: { type: "string" },
-          },
-        },
-        CheckRequest: {
-          type: "object",
-          required: ["address"],
-          properties: {
-            address: { type: "string" },
-            asset_code: { type: "string" },
-            asset_issuer: { type: "string" },
-          },
-        },
-        CheckResult: {
-          type: "object",
-          properties: {
-            funded: { type: "boolean" },
-            trustline: { type: "boolean" },
-            trustline_authorized: { type: "boolean" },
-            xlm_balance: { type: "string" },
-            spendable_xlm_balance: { type: "string" },
-            errors: {
-              type: "array",
-              items: { type: "string" },
-            },
-          },
-        },
-        ContributorList: {
-          type: "object",
-          properties: {
-            data: {
-              type: "array",
-              items: { $ref: "#/components/schemas/Registration" },
-            },
-            nextCursor: { type: "string", nullable: true },
-            hasMore: { type: "boolean" },
-          },
-        },
-        DashboardStats: {
-          type: "object",
-          properties: {
-            total: { type: "integer" },
-            ready: { type: "integer" },
-            lowReserve: { type: "integer" },
-          },
-        },
-        ActionLookupResult: {
-          type: "object",
-          properties: {
-            address: { type: "string" },
-            funded: { type: "boolean" },
-            trustline: { type: "boolean" },
-            trustline_authorized: { type: "boolean" },
-            xlm_balance: { type: "string" },
-            spendable_xlm_balance: { type: "string" },
-            readiness: {
-              type: "string",
-              enum: ["ready", "low_reserve", "not_ready"],
-            },
-            nextAction: {
-              type: "string",
-              enum: ["fund_account", "add_trustline", "increase_reserve", "none"],
-              description: "Recommended next action for the contributor",
-            },
-          },
-        },
-        WebhookPayload: {
-          type: "object",
-          required: [
-            "schema_version",
-            "event",
-            "timestamp",
-            "repository",
-            "issue_number",
-            "stellar_address",
-            "result",
-          ],
-          properties: {
-            schema_version: { type: "string", example: "1" },
-            event: { type: "string", example: "validation_complete" },
-            timestamp: { type: "string", format: "date-time" },
-            repository: { type: "string", example: "owner/repo" },
-            issue_number: { type: "integer", nullable: true },
-            stellar_address: { type: "string", example: "GBX7...4Y5Z" },
-            result: {
-              type: "object",
-              required: [
-                "valid",
-                "account_funded",
-                "trustline_exists",
-                "xlm_balance",
-                "checks",
-              ],
-              properties: {
-                valid: { type: "boolean" },
-                account_funded: { type: "boolean" },
-                trustline_exists: { type: "boolean" },
-                xlm_balance: { type: "string" },
-                checks: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    required: ["label", "passed"],
-                    properties: {
-                      label: { type: "string" },
-                      passed: { type: "boolean" },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
       securitySchemes: {
         bearerAuth: {
           type: "http",
@@ -619,42 +426,55 @@ export function generateOpenAPISpec(
           bearerFormat: "JWT",
         },
       },
+      schemas: {
+        ErrorResponse: {
+          type: "object",
+          required: ["error"],
+          properties: {
+            error: { type: "string" },
+            message: { type: "string" },
+          },
+        },
+        Badge: {
+          type: "object",
+          required: ["address", "status"],
+          properties: {
+            address: { type: "string" },
+            status: {
+              type: "string",
+              enum: ["ready", "pending", "blocked", "unknown"],
+            },
+            label: { type: "string" },
+            message: { type: "string" },
+            updatedAt: { type: "string", format: "date-time" },
+          },
+        },
+        AddressHistoryEntry: {
+          type: "object",
+          required: ["id", "address", "status", "createdAt"],
+          properties: {
+            id: { type: "string" },
+            address: { type: "string" },
+            status: {
+              type: "string",
+              enum: ["ready", "pending", "blocked", "unknown"],
+            },
+            reason: { type: "string" },
+            createdAt: { type: "string", format: "date-time" },
+          },
+        },
+        AddressHistoryList: {
+          type: "object",
+          required: ["entries"],
+          properties: {
+            entries: {
+              type: "array",
+              items: { $ref: "#/components/schemas/AddressHistoryEntry" },
+            },
+            nextCursor: { type: "string", nullable: true },
+          },
+        },
+      },
     },
-  };
-}
-
-/**
- * Validates the generated OpenAPI spec
- */
-export function validateOpenAPISpec(spec: OpenAPISpec): {
-  valid: boolean;
-  errors: string[];
-} {
-  const errors: string[] = [];
-
-  // Check required top-level fields
-  if (!spec.openapi) errors.push("Missing openapi version");
-  if (!spec.info) errors.push("Missing info object");
-  if (!spec.paths) errors.push("Missing paths object");
-
-  // Check info object
-  if (spec.info) {
-    if (!spec.info.title) errors.push("Missing info.title");
-    if (!spec.info.version) errors.push("Missing info.version");
-  }
-
-  // Check servers
-  if (!spec.servers || spec.servers.length === 0) {
-    errors.push("No servers defined");
-  }
-
-  // Check paths
-  if (spec.paths && Object.keys(spec.paths).length === 0) {
-    errors.push("No API paths defined");
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
   };
 }
