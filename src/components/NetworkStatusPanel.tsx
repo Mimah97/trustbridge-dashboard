@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, CheckCircle2, PauseCircle } from "lucide-react";
 
@@ -133,6 +134,80 @@ function NetworkPausedEmptyState({
   );
 }
 
+function NetworkSwitchConfirmation({
+  currentNetwork,
+  targetNetwork,
+  onConfirm,
+  onCancel,
+  submitting,
+  error,
+}: {
+  currentNetwork: StellarNetwork;
+  targetNetwork: StellarNetwork;
+  onConfirm: () => void;
+  onCancel: () => void;
+  submitting: boolean;
+  error: string | null;
+}) {
+  return (
+    <div
+      role="alertdialog"
+      aria-labelledby="network-switch-confirm-title"
+      data-testid="network-switch-confirmation"
+      className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4"
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle
+          className="mt-0.5 h-5 w-5 shrink-0 text-amber-500"
+          aria-hidden="true"
+        />
+        <div className="space-y-3">
+          <div>
+            <p
+              id="network-switch-confirm-title"
+              className="font-semibold text-foreground"
+            >
+              Confirm network switch
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Switching from {NETWORK_LABEL[currentNetwork]} to{" "}
+              {NETWORK_LABEL[targetNetwork]} will change the network the
+              dashboard validates against. An accidental switch can break Wave
+              registration. This action is recorded in the audit log.
+            </p>
+          </div>
+
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={onConfirm}
+              disabled={submitting}
+            >
+              {submitting ? "Switching…" : `Switch to ${NETWORK_LABEL[targetNetwork]}`}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onCancel}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function NetworkStatusPanel({
   config,
   className,
@@ -146,6 +221,12 @@ export function NetworkStatusPanel({
     warnings,
   } = config;
 
+  const [pendingNetwork, setPendingNetwork] = useState<StellarNetwork | null>(
+    null
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
+
   const mismatchWarnings = mismatched
     ? warnings.filter((warning) =>
         /Horizon is configured for/i.test(warning)
@@ -156,6 +237,41 @@ export function NetworkStatusPanel({
         (warning) => !/Horizon is configured for/i.test(warning)
       )
     : warnings;
+
+  const switchTargets = (["mainnet", "testnet"] as const).filter(
+    (network) => network !== horizonNetwork
+  );
+
+  async function confirmSwitch() {
+    if (!pendingNetwork) return;
+    setSubmitting(true);
+    setSwitchError(null);
+    try {
+      const response = await fetch("/api/settings/network", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          network: pendingNetwork,
+          confirm: true,
+        }),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(
+          payload?.error ?? `Network switch failed (${response.status})`
+        );
+      }
+      setPendingNetwork(null);
+    } catch (error) {
+      setSwitchError(
+        error instanceof Error ? error.message : "Network switch failed"
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <Card
@@ -213,6 +329,40 @@ export function NetworkStatusPanel({
               {warning}
             </p>
           ))}
+
+        {!mismatched && pendingNetwork === null && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <span className="text-muted-foreground">Switch network:</span>
+            {switchTargets.map((network) => (
+              <Button
+                key={network}
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSwitchError(null);
+                  setPendingNetwork(network);
+                }}
+              >
+                {NETWORK_LABEL[network]}
+              </Button>
+            ))}
+          </div>
+        )}
+
+        {!mismatched && pendingNetwork !== null && (
+          <NetworkSwitchConfirmation
+            currentNetwork={horizonNetwork}
+            targetNetwork={pendingNetwork}
+            onConfirm={confirmSwitch}
+            onCancel={() => {
+              setPendingNetwork(null);
+              setSwitchError(null);
+            }}
+            submitting={submitting}
+            error={switchError}
+          />
+        )}
       </CardContent>
     </Card>
   );

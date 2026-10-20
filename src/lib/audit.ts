@@ -39,6 +39,34 @@ export async function recordAuditLog(input: RecordAuditInput): Promise<void> {
   }
 }
 
+/**
+ * Record a pubnet/testnet switch performed from settings.
+ *
+ * Wraps {@link recordAuditLog} with the canonical action name and a stable
+ * metadata shape so the network switch trail stays consistent across call
+ * sites. Best-effort like the underlying helper.
+ */
+export async function recordNetworkSwitchAudit(input: {
+  actorId?: string | null;
+  actorLogin?: string | null;
+  fromNetwork: string;
+  toNetwork: string;
+  confirmed: boolean;
+}): Promise<void> {
+  await recordAuditLog({
+    action: "settings.network.switch",
+    actorId: input.actorId ?? null,
+    actorLogin: input.actorLogin ?? null,
+    targetId: input.toNetwork,
+    targetLabel: input.toNetwork,
+    metadata: {
+      fromNetwork: input.fromNetwork,
+      toNetwork: input.toNetwork,
+      confirmed: input.confirmed,
+    },
+  });
+}
+
 /** Read the most recent audit log entries, newest first. */
 export async function getRecentAuditLog(limit = 50): Promise<AuditLogEntry[]> {
   const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 200);
