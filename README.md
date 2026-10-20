@@ -482,3 +482,8 @@ This project is licensed under the [MIT License](LICENSE).
 - [Setup guide](./docs/SETUP.md)
 - [Stellar Horizon API](https://developers.stellar.org/docs/data/apis/horizon)
 - [Stellar USDC trustlines](https://developers.stellar.org/docs/learn/fundamentals/stellar-data-structures/accounts/trustlines)
+
+## Handsoff notes
+
+<!-- handsoff-issue-590 -->
+- #590: Implement profile wallet verification status badges with tests
