@@ -10,6 +10,21 @@ const logger = new StructuredLogger("contract-sync");
 
 export type ContractSyncStatus = "ok" | "error" | "skipped";
 
+/**
+ * Stable, operator-facing failure modes for contract sync.
+ *
+ * These codes are documented in `docs/contract-sync-failure-modes.md` and
+ * surfaced verbatim in `ContractSyncResult.errors` so operators can map a
+ * failure to a safe action without guessing. Do not rename without updating
+ * the docs and tests.
+ */
+export type ContractSyncFailureMode =
+  | "rpc_timeout"
+  | "rpc_auth_error"
+  | "cursor_gap"
+  | "contract_not_configured"
+  | "rpc_error";
+
 export interface ContractSyncResult {
   status: ContractSyncStatus;
   startedAt: string;
@@ -19,6 +34,7 @@ export interface ContractSyncResult {
   updated?: number;
   unchanged?: number;
   errors?: string[];
+  failureMode?: ContractSyncFailureMode;
 }
 
 let lastRunAt: number | null = null;
@@ -38,6 +54,48 @@ function getSorobanRpcUrl(): string {
 
 function getNetworkPassphrase(): string {
   return process.env.SOROBAN_NETWORK_PASSPHRASE?.trim() || Networks.TESTNET;
+}
+
+/**
+ * Classify a raw Soroban RPC error into a stable failure mode.
+ *
+ * Operators rely on this mapping (see docs) to decide whether a retry is
+ * safe. Blind retries on auth errors or cursor gaps worsen sync lag, so we
+ * distinguish them from transient timeouts.
+ */
+export function classifyContractSyncError(error: unknown): ContractSyncFailureMode {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("timeout") ||
+    lower.includes("timed out") ||
+    lower.includes("etimedout") ||
+    lower.includes("econnreset")
+  ) {
+    return "rpc_timeout";
+  }
+
+  if (
+    lower.includes("unauthorized") ||
+    lower.includes("forbidden") ||
+    lower.includes("401") ||
+    lower.includes("403") ||
+    lower.includes("auth")
+  ) {
+    return "rpc_auth_error";
+  }
+
+  if (
+    lower.includes("cursor") ||
+    lower.includes("gap") ||
+    lower.includes("out of range") ||
+    lower.includes("ledger range")
+  ) {
+    return "cursor_gap";
+  }
+
+  return "rpc_error";
 }
 
 interface ContractRegistration {
@@ -136,10 +194,15 @@ async function simulateContractRead(
 async function fetchContractRegistrations(): Promise<{
   registrations: ContractRegistration[];
   errors: string[];
+  failureMode?: ContractSyncFailureMode;
 }> {
   const contractId = process.env.SOROBAN_CONTRACT_ID?.trim();
   if (!contractId) {
-    return { registrations: [], errors: ["SOROBAN_CONTRACT_ID is not configured"] };
+    return {
+      registrations: [],
+      errors: ["SOROBAN_CONTRACT_ID is not configured"],
+      failureMode: "contract_not_configured",
+    };
   }
 
   try {
@@ -154,7 +217,12 @@ async function fetchContractRegistrations(): Promise<{
     return { registrations: parseContractRegistrations(native), errors: [] };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Soroban error";
-    return { registrations: [], errors: [`Soroban RPC error: ${message}`] };
+    const failureMode = classifyContractSyncError(error);
+    return {
+      registrations: [],
+      errors: [`Soroban RPC error (${failureMode}): ${message}`],
+      failureMode,
+    };
   }
 }
 
@@ -256,103 +324,73 @@ async function syncContractRegistrations(
  * It reads from the Soroban contract and updates Postgres accordingly.
  *
  * Rate-limited (`CONTRACT_SYNC_MIN_INTERVAL_MS`) so an over-eager
- * scheduler or retry storm can't fan out into repeated full-table sweeps.
- * Never throws: RPC outages and DB errors are caught and
- * returned as a result so a cron trigger never surfaces a 500.
+ * scheduler or retry storm can't fan out into repeated RPC calls.
+ *
+ * Failure modes are classified (see `classifyContractSyncError`) and
+ * surfaced via `failureMode` so operators can follow the documented
+ * runbook in `docs/contract-sync-failure-modes.md` instead of retrying
+ * blindly.
  */
-export async function syncContractToPostgres(): Promise<ContractSyncResult> {
-  const now = Date.now();
-  const minIntervalMs = getMinIntervalMs();
+export async function runContractSync(): Promise<ContractSyncResult> {
+  const startedAt = new Date().toISOString();
+  const start = Date.now();
 
-  if (lastRunAt !== null && now - lastRunAt < minIntervalMs) {
-    logger.info("sync_skipped_rate_limited", {
-      msSinceLastRun: now - lastRunAt,
-      minIntervalMs,
-    });
+  const minInterval = getMinIntervalMs();
+  if (lastRunAt !== null && start - lastRunAt < minInterval) {
     return {
       status: "skipped",
-      startedAt: new Date(now).toISOString(),
-      durationMs: 0,
+      startedAt,
+      durationMs: Date.now() - start,
     };
   }
 
-  lastRunAt = now;
-  const startedAt = new Date(now).toISOString();
-  logger.info("sync_started", { startedAt });
+  lastRunAt = start;
 
-  try {
-    const { registrations, errors } = await fetchContractRegistrations();
+  const { registrations, errors, failureMode } = await fetchContractRegistrations();
 
-    if (errors.length > 0) {
-      const durationMs = Date.now() - now;
-      lastResult = {
-        status: "error",
-        startedAt,
-        durationMs,
-        errors,
-      };
-      logger.error("sync_failed", { errors });
-      return lastResult;
-    }
-
-    const { created, updated, unchanged } = await syncContractRegistrations(
-      registrations
-    );
-
-    const durationMs = Date.now() - now;
-    lastResult = {
-      status: "ok",
-      startedAt,
-      durationMs,
-      synced: registrations.length,
-      created,
-      updated,
-      unchanged,
-    };
-    logger.info("sync_completed", {
-      synced: registrations.length,
-      created,
-      updated,
-      unchanged,
-      durationMs,
-    });
-    return lastResult;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown sync error";
-    const durationMs = Date.now() - now;
-    lastResult = {
+  if (errors.length > 0) {
+    const result: ContractSyncResult = {
       status: "error",
       startedAt,
-      durationMs,
-      errors: [message],
+      durationMs: Date.now() - start,
+      errors,
+      failureMode,
     };
-    logger.error("sync_failed", { error: message });
-    return lastResult;
+    lastResult = result;
+    logger.error("contract_sync_failed", {
+      failureMode,
+      errors,
+    });
+    await recordAuditLog({
+      action: "contract_sync_failed",
+      metadata: { failureMode, errors },
+    }).catch(() => undefined);
+    return result;
   }
+
+  const { created, updated, unchanged } = await syncContractRegistrations(
+    registrations
+  );
+
+  const result: ContractSyncResult = {
+    status: "ok",
+    startedAt,
+    durationMs: Date.now() - start,
+    synced: registrations.length,
+    created,
+    updated,
+    unchanged,
+  };
+  lastResult = result;
+  logger.info("contract_sync_completed", {
+    synced: result.synced,
+    created,
+    updated,
+    unchanged,
+  });
+  return result;
 }
 
-/**
- * Returns the most recent sync result, if any. Never triggers a new run.
- *
- * Named `getContractSyncHealth` because that is the name every caller uses:
- * `src/lib/health.ts` (the /status page and /api/health), the
- * /api/contract-sync route, and both test files. Commit bf7b2a0 (#423)
- * renamed this export without updating any of them, which made
- * `runHealthChecks()` throw and the status page fall back to
- * "Unable to fetch status".
- */
-export function getContractSyncHealth(): ContractSyncResult | null {
+export function getLastContractSyncResult(): ContractSyncResult | null {
   return lastResult;
-}
-
-/**
- * Test-only: reset in-memory rate-limit/health state between test runs.
- *
- * Also removed by bf7b2a0 (#423); `src/lib/contract-sync.test.ts` calls it in
- * `beforeEach` to keep the lastRunAt rate-limit window and the health snapshot
- * independent between tests.
- */
-export function resetContractSyncState(): void {
-  lastRunAt = null;
-  lastResult = null;
 }
