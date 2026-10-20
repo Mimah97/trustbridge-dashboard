@@ -116,6 +116,37 @@ Design decisions:
 
 ---
 
+## Offline queue for pending rechecks
+
+Recheck actions (`POST /api/rechecks`) are **not** replayed by the service worker. The SW never intercepts mutating requests (see the security invariants above), so an offline recheck is never silently buffered at the network layer. Instead, the client-side queue in `src/lib/` owns the behavior, and the offline banner is the user-facing signal that a queue may be accumulating.
+
+### What happens while offline
+
+1. The user triggers a recheck. The client checks `navigator.onLine` (and the `offline` event state) before issuing the request.
+2. If offline, the action is **not** sent. It is appended to the pending-recheck queue in `src/lib/` and persisted to `localStorage` under a versioned key so it survives a reload or app relaunch.
+3. The offline banner (`data-testid="offline-banner"`) is shown, so the user knows the action is pending rather than failed. The UI must not present the recheck as completed.
+4. Each queued entry records the contributor id, the recheck payload, and a client-generated idempotency key. The idempotency key is what prevents double-submits on reconnect.
+
+### What happens on reconnect
+
+1. The `online` event fires; the banner auto-dismisses.
+2. The queue is flushed **in FIFO order**, one entry at a time. Each entry is sent as a normal `POST /api/rechecks` with the existing auth cookie and CSRF token — the queue does not bypass auth or CSRF.
+3. **Dedupe**: before sending, the client drops any entry whose idempotency key was already acknowledged, and the server treats a repeated idempotency key as a no-op. This is what stops contributors from double-submitting when they tap recheck twice offline.
+4. On a `2xx` response the entry is removed from the queue and persisted state is rewritten.
+5. On a `4xx` (validation, auth, CSRF) the entry is removed and surfaced as a clear, stable error — retrying a malformed or unauthorized entry would loop forever.
+6. On a network error or `5xx` the entry stays queued and is retried on the next `online` event or the next flush tick. Retries are bounded; after the limit the entry is dropped and an actionable error is shown.
+
+### Cancellation and pause
+
+- If the user navigates away or the app is paused mid-flush, the in-flight entry is left in the queue until its response is observed. No partial privileged state is written: the queue entry is only removed after a confirmed response.
+- A malformed queue entry (bad JSON, missing idempotency key) is discarded on load with a stable error rather than crashing the flush loop.
+
+### What this is NOT
+
+This is a client-side queue, not Background Sync. The SW does not register a `sync` event and does not replay requests while the tab is closed. If the tab is closed with entries pending, they flush on the next launch when connectivity returns.
+
+---
+
 ## Content Security Policy (CSP) notes
 
 The project does not currently configure a CSP header (see `next.config.mjs` and `src/middleware.ts`). If a CSP is added in the future, the following directives are required for the PWA to function:
@@ -142,7 +173,7 @@ This is intentionally minimal. The following are explicitly out of scope:
 | Feature | Why excluded |
 |---------|--------------|
 | Full offline dashboard | Contributor data is PII; caching it in the SW would require careful per-user cache partitioning and cache eviction tied to session expiry. Out of scope. |
-| Background sync | Would require queueing mutating requests (register, recheck) offline and replaying them later — complex and risky for financial/Stellar operations. |
+| Background sync | Would require queueing mutating requests (register, recheck) offline and replaying them later — complex and risky for financial/Stellar operations. The client-side recheck queue above is the deliberate, bounded alternative. |
 | Push notifications | Requires a push subscription service. Not planned. |
 | Workbox / next-pwa | Adds build complexity and auto-generates a SW from the Next.js chunk manifest, which can inadvertently cache API routes. A hand-written SW with explicit exclusions is safer for this project. |
 | iOS Safari "Add to Homescreen" icons | The project does not currently have PWA-sized PNG icons. The `favicon.ico` is registered as a fallback. Add 192×192 and 512×512 PNGs to `public/` and reference them in `manifest.json` to enable rich homescreen icons. |
@@ -176,14 +207,7 @@ it("hides when back online", async () => {
 });
 ```
 
-The service worker itself (`public/sw.js`) is a plain JavaScript file and can be tested with a mock `ServiceWorkerGlobalScope` or inspected in Chrome DevTools → Application → Service Workers.
+The offline recheck queue in `src/lib/` is covered by tests under `tests/`:
 
----
-
-## Upgrading
-
-To update the shell cache (e.g. after adding a new static asset to pre-cache):
-
-1. Edit the `SHELL_ASSETS` array in `public/sw.js`.
-2. Increment `CACHE_NAME` (e.g. `trustbridge-shell-v1` → `trustbridge-shell-v2`).
-3. Deploy. Existing clients will pick up the new SW on the next page load; the activate handler will clean up the old cache.
+- **Happy path**: a recheck queued while offline is flushed on the `online` event and removed from persisted state after a `2xx`.
+- **Failure path**: a malformed queue entry (or a `4xx` response) is discarded and surfaces a stable error instead of looping.
