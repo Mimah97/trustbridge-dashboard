@@ -487,3 +487,6 @@ This project is licensed under the [MIT License](LICENSE).
 
 <!-- handsoff-issue-593 -->
 - #593: Add notifications preference persistence and mute-window tests
+
+<!-- handsoff-issue-594 -->
+- #594: Implement maintainer conflicts queue SLA timers in UI
