@@ -36,7 +36,7 @@ export default async function StatusPage() {
 
   if (!health) {
     return (
-      <main id="main-content" className="mx-auto max-w-2xl px-6 py-16 sm:px-8">
+      <main id="main-content" tabIndex={-1} className="mx-auto max-w-2xl px-6 py-16 sm:px-8">
         <h1 className="text-2xl font-bold tracking-tight">Service status</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           Unable to fetch status. The service may be starting up.
@@ -46,7 +46,7 @@ export default async function StatusPage() {
   }
 
   return (
-    <main id="main-content" className="mx-auto max-w-2xl px-6 py-16 sm:px-8">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-2xl px-6 py-16 sm:px-8">
       <StatusClient initial={health} />
     </main>
   );

@@ -46,7 +46,7 @@ export default async function HomePage() {
       </div>
 
       {/* Hero — centered, focused */}
-      <section className="mx-auto max-w-7xl px-6 pb-20 pt-20 sm:px-8 lg:pb-24 lg:pt-24">
+      <section id="main-content" tabIndex={-1} className="mx-auto max-w-7xl px-6 pb-20 pt-20 sm:px-8 lg:pb-24 lg:pt-24">
         <div className="mx-auto max-w-2xl text-center">
           <p className="mb-5 inline-flex items-center rounded-full border border-border bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
             Open source · Stellar · GitHub OAuth

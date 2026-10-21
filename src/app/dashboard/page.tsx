@@ -216,7 +216,7 @@ export default function DashboardPage() {
             : null;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       {/*
         The dashboard's own skip link. `layout.tsx` gets a keyboard user to
         `main`; from there the contributor table is still past the re-check
@@ -455,6 +455,6 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

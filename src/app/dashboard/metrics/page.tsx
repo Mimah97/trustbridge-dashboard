@@ -175,7 +175,9 @@ export default function MetricsPage() {
   const auditEntries = Object.entries(audit.byAction).sort((a, b) => b[1] - a[1]);
 
   return (
-    <div
+    <main
+      id="main-content"
+      tabIndex={-1}
       className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10"
       data-testid="metrics-page"
     >
@@ -393,7 +395,7 @@ export default function MetricsPage() {
           </dl>
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }
 
