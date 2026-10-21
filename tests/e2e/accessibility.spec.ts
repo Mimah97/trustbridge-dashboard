@@ -134,10 +134,11 @@ test.describe("Skip link", () => {
     const href = await skipLink.getAttribute("href");
     expect(href).toBe("#main-content");
 
-    // Click the skip link; main-content should receive focus
-    await skipLink.click();
+    // Activate via keyboard Enter — this tests the actual keyboard path, not a
+    // synthetic mouse click. The skip link must already be focused at this point.
+    await page.keyboard.press("Enter");
 
-    // The <main id="main-content" tabIndex={-1}> element should be focused
+    // The <main id="main-content" tabIndex={-1}> element should be focused after Enter
     const focused = await page.evaluate(() => document.activeElement?.id ?? "");
     expect(focused).toBe("main-content");
   });
