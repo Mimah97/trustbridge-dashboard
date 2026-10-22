@@ -19,6 +19,18 @@ export interface BanAppealNote {
   createdAt: Date;
 }
 
+/**
+ * Stable, auditable reason surfaced to banned contributors on register/check.
+ * Kept generic so internal moderation notes are not leaked to the caller.
+ */
+export const BAN_ENFORCE_REASON = "Contributor is banned from Wave registries";
+
+export interface BanEnforcement {
+  allowed: boolean;
+  reason?: string;
+  bannedAt?: Date;
+}
+
 const BAN_APPEAL_OUTCOMES: readonly BanAppealOutcome[] = ["pending", "approved", "denied"];
 
 /**
@@ -78,6 +90,29 @@ export async function isUserBanned(
     // Fail open or closed depending on security requirement - fail safe by allowing if DB error, but logging
     return { banned: false };
   }
+}
+
+/**
+ * Single enforce path used by register and check APIs. Resolves ban status via
+ * `isUserBanned` and returns a stable, auditable decision. Internal ban notes
+ * are never surfaced; callers receive `BAN_ENFORCE_REASON` instead.
+ */
+export async function enforceBan({
+  userId,
+  githubUsername,
+}: {
+  userId?: string | null;
+  githubUsername?: string | null;
+}): Promise<BanEnforcement> {
+  const status = await isUserBanned(userId, githubUsername);
+  if (!status.banned) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason: BAN_ENFORCE_REASON,
+    bannedAt: status.bannedAt,
+  };
 }
 
 /**
