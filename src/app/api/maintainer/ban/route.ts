@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireMaintainerSession } from "@/lib/api-auth";
 import { assertSameOrigin } from "@/lib/csrf";
+import { invalidateContributorListCaches } from "@/lib/cache-tags";
 import { banContributor, unbanContributor } from "@/lib/ban-service";
 
 export const runtime = "nodejs";
@@ -47,6 +48,8 @@ export async function POST(request: NextRequest) {
         actorLogin: session.user.githubUsername ?? null,
       });
 
+      await invalidateContributorListCaches();
+
       return NextResponse.json({
         success: true,
         message: `Contributor @${result.githubUsername} has been banned.`,
@@ -59,6 +62,8 @@ export async function POST(request: NextRequest) {
         actorLogin: session.user.githubUsername ?? null,
         reason,
       });
+
+      await invalidateContributorListCaches();
 
       return NextResponse.json({
         success: true,
