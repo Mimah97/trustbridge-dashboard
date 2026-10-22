@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 import { recordAuditLog } from "@/lib/audit";
 import { ApiKeyScope, API_KEY_SCOPES, hasApiKeyScope } from "@/lib/api-key-scopes";
@@ -82,9 +83,17 @@ const API_KEY_RATE_LIMIT = {
  * if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
  * ```
  */
-export async function requireApiKeyScope(
-  request: NextRequest,
-  requiredScope: ApiKeyScope
+/**
+ * Authenticate an API key without enforcing any scope.
+ *
+ * Runs the same rate-limit, format, lookup, and lifecycle (revoked/expired)
+ * checks as {@link requireApiKeyScope}. Returns the key record so the caller
+ * can enforce a scope explicitly and return a stable 403 when it is missing.
+ * Returns `null` on any auth failure; the caller is responsible for returning
+ * a 401. A `RateLimitResult` is returned when the IP is rate-limited.
+ */
+export async function authenticateApiKey(
+  request: NextRequest
 ): Promise<
   | AuthenticatedApiKey
   | { rateLimited: true; result: { allowed: false; retryAfter: number; remaining: number } }
@@ -163,18 +172,7 @@ export async function requireApiKeyScope(
     return null;
   }
 
-  // ── 5. Scope check ───────────────────────────────────────────────────────
-  if (!hasScope(key.scopes, requiredScope)) {
-    await recordAuditLog({
-      action: "api_key.use_rejected",
-      targetId: key.id,
-      targetLabel: key.name,
-      metadata: { reason: "insufficient_scope", required: requiredScope, actual: key.scopes },
-    });
-    return null;
-  }
-
-  // ── 6. Update lastUsedAt (best-effort, non-blocking) ────────────────────
+  // ── 5. Update lastUsedAt (best-effort, non-blocking) ────────────────────
   prisma.apiKey
     .update({ where: { id: key.id }, data: { lastUsedAt: now } })
     .catch(() => {/* best-effort */ });
@@ -186,6 +184,50 @@ export async function requireApiKeyScope(
     createdById: key.createdById,
     maintainerOrgId: key.maintainerOrgId,
   };
+}
+
+/**
+ * Authenticate an API key and enforce that it carries `requiredScope`.
+ * Thin wrapper over {@link authenticateApiKey}; returns `null` when the key
+ * is missing/invalid/expired/revoked or lacks the scope, so existing callers
+ * keep their 401 behaviour. Prefer {@link authenticateApiKey} plus
+ * {@link insufficientScopeResponse} when a stable 403 is required.
+ */
+export async function requireApiKeyScope(
+  request: NextRequest,
+  requiredScope: ApiKeyScope
+): Promise<
+  | AuthenticatedApiKey
+  | { rateLimited: true; result: { allowed: false; retryAfter: number; remaining: number } }
+  | null
+> {
+  const auth = await authenticateApiKey(request);
+  if (!auth || "rateLimited" in auth) return auth;
+  if (!hasScope(auth.scopes, requiredScope)) {
+    await recordAuditLog({
+      action: "api_key.use_rejected",
+      targetId: auth.id,
+      targetLabel: auth.name,
+      metadata: { reason: "insufficient_scope", required: requiredScope, actual: auth.scopes },
+    });
+    return null;
+  }
+  return auth;
+}
+
+/**
+ * Stable 403 response for a valid API key that lacks the required scope.
+ * No stack traces or key material — safe to return verbatim.
+ */
+export function insufficientScopeResponse(requiredScope: ApiKeyScope) {
+  return NextResponse.json(
+    {
+      error: "Forbidden: API key lacks the required scope",
+      code: "insufficient_scope",
+      requiredScope,
+    },
+    { status: 403 }
+  );
 }
 
 // Re-export so callers only need to import from this module.
