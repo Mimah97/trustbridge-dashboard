@@ -137,6 +137,21 @@ log tailing or the health endpoint.
 }
 ```
 
+### Operator expectations
+
+- **Hard failures alert once**: database errors, streaming aborts, and lock
+  contention that survives retries run through the `catch` branch of
+  `runCronExport()`, which records `export.cron.failed` and fires exactly one
+  `sendCronExportAlert()` call.
+- **Skips never alert**: rate-limited overlapping runs return
+  `{ status: "skipped" }` before any work starts, so overlapping cron
+  invocations do not spam the alert channel.
+- **No PII in alerts**: `sendCronExportAlert()` passes the error through
+  `redactAlertText()`, which masks Stellar G-addresses (kept as
+  `Gxxxx...yyyy` for triage) and `tb_`/`sk-`/Slack-style secrets. Alert
+  delivery itself is fire-and-forget — a failing webhook is logged and never
+  re-thrown, so it cannot crash the cron handler twice.
+
 ### Supported webhook targets
 
 Any HTTP endpoint that accepts a POST with a JSON body works. Common options:
