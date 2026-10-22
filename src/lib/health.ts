@@ -7,6 +7,11 @@
  *
  * The API route at `src/app/api/health/route.ts` also calls `runHealthChecks`
  * so both paths stay in sync. (#403)
+ *
+ * `NetworkStatusPanel` consumes the same `HealthResponse` shape from
+ * `/api/health`; `parseHealthResponse` below validates partial/malformed
+ * payloads so the panel can render a degraded/unavailable state instead of
+ * crashing. (#538)
  */
 
 import { getContractSyncHealth } from "@/lib/contract-sync";
@@ -46,6 +51,88 @@ export interface HealthResponse {
  */
 export function healthStatusCode(status: HealthStatus): number {
   return status === "error" ? 503 : 200;
+}
+
+const HEALTH_STATUSES: readonly HealthStatus[] = ["ok", "degraded", "error"];
+
+function isHealthStatus(value: unknown): value is HealthStatus {
+  return typeof value === "string" && (HEALTH_STATUSES as readonly string[]).includes(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+}
+
+function asNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/**
+ * Normalize an unknown `/api/health` payload into a `HealthResponse`.
+ *
+ * Returns `null` when the payload is not an object at all (e.g. HTML error
+ * page or empty body) so callers can surface an "unavailable" state. Missing
+ * or malformed individual checks are coerced to `degraded` with zeroed
+ * metrics, so partial payloads still render without crashing. (#538)
+ */
+export function parseHealthResponse(payload: unknown): HealthResponse | null {
+  const root = asRecord(payload);
+  if (!root) return null;
+
+  const checks = asRecord(root.checks) ?? {};
+  const database = asRecord(checks.database);
+  const horizon = asRecord(checks.horizon);
+  const sorobanRpc = asRecord(checks.sorobanRpc);
+  const csvStaleness = asRecord(checks.csvStaleness);
+  const contractSync = asRecord(checks.contractSync);
+
+  const dbError = database && typeof database.error === "string" ? database.error : undefined;
+  const contractSyncError =
+    contractSync && typeof contractSync.lastError === "string"
+      ? contractSync.lastError
+      : undefined;
+
+  return {
+    status: isHealthStatus(root.status) ? root.status : "degraded",
+    timestamp: asString(root.timestamp, new Date().toISOString()),
+    checks: {
+      database: {
+        status: database && isHealthStatus(database.status) ? database.status : "degraded",
+        latencyMs: asNumber(database?.latencyMs),
+        ...(dbError ? { error: dbError } : {}),
+      },
+      horizon: {
+        status: horizon && isHealthStatus(horizon.status) ? horizon.status : "degraded",
+        latencyMs: asNumber(horizon?.latencyMs),
+      },
+      sorobanRpc: {
+        status: sorobanRpc && isHealthStatus(sorobanRpc.status) ? sorobanRpc.status : "degraded",
+        latencyMs: asNumber(sorobanRpc?.latencyMs),
+      },
+      csvStaleness: {
+        status:
+          csvStaleness && isHealthStatus(csvStaleness.status) ? csvStaleness.status : "degraded",
+        staleCount: asNumber(csvStaleness?.staleCount),
+        totalCount: asNumber(csvStaleness?.totalCount),
+        stalePercent: asNumber(csvStaleness?.stalePercent),
+        warning: asString(csvStaleness?.warning),
+      },
+      contractSync: {
+        status:
+          contractSync && isHealthStatus(contractSync.status) ? contractSync.status : "degraded",
+        lastRunAt:
+          contractSync && typeof contractSync.lastRunAt === "string"
+            ? contractSync.lastRunAt
+            : null,
+        ...(contractSyncError ? { lastError: contractSyncError } : {}),
+      },
+    },
+    version: asString(root.version, "unknown"),
+  };
 }
 
 /** Probe Horizon by hitting /fee_stats — lightweight, no auth, always available. */
