@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { recordAuditLog } from "@/lib/audit";
+import { buildBanEmail, sendEmailNotification } from "@/lib/email";
 
 export interface BanStatus {
   banned: boolean;
@@ -88,11 +89,13 @@ export async function banContributor({
   reason,
   actorId,
   actorLogin,
+  locale,
 }: {
   githubUsername: string;
   reason: string;
   actorId: string;
   actorLogin?: string | null;
+  locale?: string;
 }) {
   const normalizedUsername = githubUsername.trim().toLowerCase();
   const trimmedReason = reason.trim();
@@ -150,7 +153,26 @@ export async function banContributor({
     },
   });
 
-  return { success: true, githubUsername: normalizedUsername, reason: trimmedReason };
+  let emailSent = false;
+  if (user?.email) {
+    try {
+      const template = buildBanEmail({
+        githubUsername: normalizedUsername,
+        reason: trimmedReason,
+        locale,
+      });
+      emailSent = await sendEmailNotification({ to: user.email, ...template });
+    } catch (error) {
+      console.error("Failed to build or send contributor ban notice:", error);
+    }
+  }
+
+  return {
+    success: true,
+    githubUsername: normalizedUsername,
+    reason: trimmedReason,
+    emailSent,
+  };
 }
 
 /**

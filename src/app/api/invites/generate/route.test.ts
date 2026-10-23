@@ -11,6 +11,11 @@ vi.mock("@/lib/audit", () => ({
   recordAuditLog: vi.fn(),
 }));
 
+vi.mock("@/lib/email", () => ({
+  buildInviteEmail: vi.fn(),
+  sendEmailNotification: vi.fn(),
+}));
+
 vi.mock("@/lib/invite-helpers", () => ({
   createInvite: vi.fn(),
   generateInviteCode: vi.fn(() => "mock-code-1234567890abcdef1234"),
@@ -25,6 +30,7 @@ vi.mock("@/lib/feature-flags", () => ({
 
 import { requireAdmin } from "@/lib/api-auth";
 import { recordAuditLog } from "@/lib/audit";
+import { buildInviteEmail, sendEmailNotification } from "@/lib/email";
 import { createInvite, listInvites, revokeInvites } from "@/lib/invite-helpers";
 import { NextRequest } from "next/server";
 
@@ -75,7 +81,100 @@ describe("Bulk invite link generator", () => {
       expect(json.invites).toHaveLength(5);
       expect(json.invites[0].code).toBeDefined();
       expect(createInvite).toHaveBeenCalledTimes(5);
+      expect(sendEmailNotification).not.toHaveBeenCalled();
       expect(recordAuditLog).toHaveBeenCalled();
+    });
+
+    it("sends localized invite notices to optional recipients", async () => {
+      vi.mocked(requireAdmin).mockResolvedValue(adminSession());
+      vi.mocked(createInvite).mockResolvedValue({
+        id: "invite-1",
+        expiresAt: null,
+        createdAt: new Date("2026-10-01T00:00:00Z"),
+      } as never);
+      vi.mocked(buildInviteEmail).mockReturnValue({
+        subject: "Convite",
+        body: "Código do convite",
+      });
+      vi.mocked(sendEmailNotification).mockResolvedValue(true);
+
+      const res = await POST(
+        new NextRequest("http://localhost/api/invites/generate", {
+          method: "POST",
+          headers: { origin: "http://localhost" },
+          body: JSON.stringify({ recipientEmails: ["guest@example.com"], locale: "pt" }),
+        })
+      );
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.generated).toBe(1);
+      expect(json.emailDelivery).toEqual({ sent: 1, failed: 0 });
+      expect(buildInviteEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ inviteCode: "mock-code-1234567890abcdef1234", locale: "pt" })
+      );
+      expect(sendEmailNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "guest@example.com",
+          subject: "Convite",
+          idempotencyScope: "invite-1",
+        })
+      );
+    });
+
+    it("keeps generated invites when notice delivery fails", async () => {
+      vi.mocked(requireAdmin).mockResolvedValue(adminSession());
+      vi.mocked(createInvite).mockResolvedValue({
+        id: "invite-1",
+        expiresAt: null,
+        createdAt: new Date("2026-10-01T00:00:00Z"),
+      } as never);
+      vi.mocked(buildInviteEmail).mockReturnValue({ subject: "Invite", body: "Body" });
+      vi.mocked(sendEmailNotification).mockResolvedValue(false);
+
+      const res = await POST(
+        new NextRequest("http://localhost/api/invites/generate", {
+          method: "POST",
+          headers: { origin: "http://localhost" },
+          body: JSON.stringify({ recipientEmails: ["guest@example.com"] }),
+        })
+      );
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.generated).toBe(1);
+      expect(json.emailDelivery).toEqual({ sent: 0, failed: 1 });
+    });
+
+    it("rejects malformed recipient email lists before creating invites", async () => {
+      vi.mocked(requireAdmin).mockResolvedValue(adminSession());
+
+      const res = await POST(
+        new NextRequest("http://localhost/api/invites/generate", {
+          method: "POST",
+          headers: { origin: "http://localhost" },
+          body: JSON.stringify({ recipientEmails: ["not-an-email"] }),
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(createInvite).not.toHaveBeenCalled();
+      expect(sendEmailNotification).not.toHaveBeenCalled();
+    });
+
+    it("returns a stable 400 for malformed JSON", async () => {
+      vi.mocked(requireAdmin).mockResolvedValue(adminSession());
+      const res = await POST(
+        new NextRequest("http://localhost/api/invites/generate", {
+          method: "POST",
+          headers: { origin: "http://localhost" },
+          body: "{",
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "Request body must be valid JSON" });
+      expect(createInvite).not.toHaveBeenCalled();
     });
 
     it("generates invites with default count of 10", async () => {

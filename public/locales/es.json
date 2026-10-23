@@ -66,6 +66,26 @@
     "success": "Registro exitoso",
     "error": "Falló el registro"
   },
+  "email": {
+    "invite": {
+      "subject": "Tienes una invitación a TrustBridge",
+      "heading": "Tu invitación a TrustBridge",
+      "greeting": "Hola {recipientName}, te han invitado a participar en el programa de colaboradores de TrustBridge.",
+      "greetingFallback": "colaborador",
+      "codeLabel": "Código de invitación",
+      "expires": "Esta invitación vence el {date}.",
+      "noExpiry": "Esta invitación no tiene fecha de vencimiento.",
+      "instructions": "Usa este código al completar tu registro en TrustBridge.",
+      "action": "Abrir el registro"
+    },
+    "ban": {
+      "subject": "Aviso sobre el acceso a tu cuenta de TrustBridge",
+      "heading": "Se ha suspendido tu cuenta de colaborador",
+      "greeting": "Hola @{githubUsername}, un mantenedor de TrustBridge ha suspendido tu cuenta de colaborador.",
+      "reasonLabel": "Motivo",
+      "nextSteps": "Si crees que esta decisión fue un error, contacta con los mantenedores de TrustBridge para hablarlo."
+    }
+  },
   "date": {
     "formats": {
       "short": "{day}/{month}/{year}",

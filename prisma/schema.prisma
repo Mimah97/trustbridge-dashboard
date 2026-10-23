@@ -197,6 +197,12 @@ model QueueJob {
   @@index([type, status])
 }
 
+model CronExportLock {
+  id             String   @id
+  token          String
+  leaseExpiresAt DateTime
+}
+
 /// Optional database source for the feature-flags module (see src/lib/feature-flags.ts).
 /// Only consulted when FEATURE_FLAGS_DB_ENABLED is truthy; env overrides always win.
 model FeatureFlag {

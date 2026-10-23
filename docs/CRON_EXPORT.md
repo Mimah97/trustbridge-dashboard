@@ -210,16 +210,27 @@ Runs with no email destination are still audited with `destination: "none"` and 
 
 ---
 
-## Rate limiting
+## Locking and rate limiting
 
-The route applies an in-process min-interval gate (default 1 minute via
-`CRON_EXPORT_MIN_INTERVAL_MS`). A second trigger within the window returns:
+The export acquires a singleton database lease before reading registrations,
+so concurrent triggers on separate app instances cannot create duplicate
+treasury files. The lease is token-checked on release and expires after one
+hour if a worker exits unexpectedly. A competing trigger, including one that
+bypasses the cooldown, returns a skipped result without reading or exporting
+data.
+
+The route also applies a min-interval gate (default 1 minute via
+`CRON_EXPORT_MIN_INTERVAL_MS`) to prevent retry storms. A trigger within the
+window returns:
 
 ```json
 { "status": "skipped", "error": "Rate limited: minimum interval between exports is 60000ms" }
 ```
 
 with HTTP 200 (not 429) so the scheduler does not retry.
+
+Apply the `CronExportLock` schema migration during deployment before enabling
+cron exports against the updated application.
 
 ---
 

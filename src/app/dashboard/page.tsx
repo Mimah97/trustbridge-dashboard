@@ -29,6 +29,7 @@ import {
 import { FreezeWindowBanner } from "@/components/FreezeWindowBanner";
 import { countReadyContributors } from "@/lib/contributors";
 import { useJobProgress } from "@/lib/use-job-progress";
+import { useI18n } from "@/lib/i18n-context";
 // Single data-fetching strategy (#307): usePaginatedContributors drives both
 // the prev/next pager and the panels that need the full contributor list.
 // useInfiniteContributors was removed to eliminate the duplicate
@@ -51,6 +52,7 @@ interface BatchRecheckResponse {
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
+  const { locale } = useI18n();
   const {
     event,
     isStreaming,
@@ -152,7 +154,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/maintainer/ban", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ githubUsername, action, reason }),
+        body: JSON.stringify({ githubUsername, action, reason, locale }),
       });
       if (!res.ok) {
         const json = await res.json();
