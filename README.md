@@ -485,6 +485,11 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Handsoff notes
 
+<!-- handsoff-issue-595 -->
+- #595: Add register invite-only mode end-to-end tests
+
+<!-- handsoff-issue-597 -->
+- #597: Add metrics histogram UI for recheck latency percentiles
 <!-- handsoff-issue-590 -->
 - #590: Implement profile wallet verification status badges with tests
 <!-- handsoff-issue-532 -->
