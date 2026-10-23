@@ -29,6 +29,28 @@ export interface AuthenticatedApiKey {
   maintainerOrgId: string;
 }
 
+/**
+ * Stable, machine-readable reasons a dual-auth request is rejected.  Routes
+ * map these to HTTP status codes so the session-vs-API-key matrix is
+ * deterministic and testable.
+ */
+export type DualAuthRejection =
+  | "missing_credentials"
+  | "conflicting_credentials"
+  | "malformed_authorization";
+
+/**
+ * Result of inspecting a request for the session-vs-API-key credential matrix.
+ *
+ * - `api_key`  → an `Authorization: Bearer <token>` header is present.
+ * - `session`  → no bearer token; caller should fall back to session auth.
+ * - `rejected` → the combination is not allowed; return the mapped status.
+ */
+export type DualAuthMode =
+  | { mode: "api_key"; token: string }
+  | { mode: "session" }
+  | { mode: "rejected"; reason: DualAuthRejection };
+
 // ---------------------------------------------------------------------------
 // Scope helpers
 // ---------------------------------------------------------------------------
@@ -40,6 +62,68 @@ export interface AuthenticatedApiKey {
  */
 export function hasScope(scopes: string[], required: ApiKeyScope): boolean {
   return hasApiKeyScope(scopes, required);
+}
+
+// ---------------------------------------------------------------------------
+// Dual-auth matrix
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify a request against the explicit session-vs-API-key matrix.
+ *
+ * Allowed combinations:
+ * - API-key-only: `Authorization: Bearer <token>` present, no session cookie.
+ * - Session-only: no bearer token; caller resolves the session.
+ *
+ * Rejected combinations:
+ * - Both a bearer token and a session cookie are present (ambiguous identity).
+ * - A non-empty `Authorization` header that is not a well-formed bearer token.
+ *
+ * This helper does not touch the DB; it only decides which auth path to take
+ * so routes stay consistent with `requireApiKeyScope`.
+ */
+export function resolveDualAuthMode(request: NextRequest): DualAuthMode {
+  const authHeader = request.headers.get("authorization");
+  const hasSessionCookie = Boolean(
+    request.cookies.get("next-auth.session-token")?.value ||
+      request.cookies.get("__Secure-next-auth.session-token")?.value
+  );
+
+  if (authHeader === null) {
+    return { mode: "session" };
+  }
+
+  const trimmed = authHeader.trim();
+  if (trimmed === "") {
+    return { mode: "session" };
+  }
+
+  if (!trimmed.startsWith("Bearer ")) {
+    return { mode: "rejected", reason: "malformed_authorization" };
+  }
+
+  const token = trimmed.slice(7).trim();
+  if (!token) {
+    return { mode: "rejected", reason: "malformed_authorization" };
+  }
+
+  if (hasSessionCookie) {
+    return { mode: "rejected", reason: "conflicting_credentials" };
+  }
+
+  return { mode: "api_key", token };
+}
+
+/** Map a dual-auth rejection reason to the HTTP status a route should return. */
+export function dualAuthRejectionStatus(reason: DualAuthRejection): number {
+  switch (reason) {
+    case "missing_credentials":
+      return 401;
+    case "conflicting_credentials":
+      return 400;
+    case "malformed_authorization":
+      return 400;
+  }
 }
 
 // ---------------------------------------------------------------------------

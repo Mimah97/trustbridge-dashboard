@@ -487,6 +487,11 @@ This project is licensed under the [MIT License](LICENSE).
 
 <!-- handsoff-issue-603 -->
 - #603: Add Playwright test for dispute create and resolve happy path
+<!-- handsoff-issue-593 -->
+- #593: Add notifications preference persistence and mute-window tests
+
+<!-- handsoff-issue-594 -->
+- #594: Implement maintainer conflicts queue SLA timers in UI
 <!-- handsoff-issue-595 -->
 - #595: Add register invite-only mode end-to-end tests
 
