@@ -59,6 +59,44 @@ freeze windows (`FEATURE_FLAG_*`, `FEATURE_FLAGS_DB_ENABLED`,
 `FEATURE_FLAGS_CACHE_TTL_MS`, `MAINTENANCE`) are documented in
 [ENVIRONMENT.md](./ENVIRONMENT.md#feature-flags-and-freeze-windows).
 
+### Freeze-window env vars
+
+The `freeze_window` flag gates the helpers in `src/lib/freeze-window.ts`. When
+it is **off**, those helpers never block a request regardless of the
+`FREEZE_WINDOW_*` env vars below. When it is **on** (the default), the
+`FREEZE_WINDOW_*` vars decide whether a freeze is currently active. These are
+the same variables documented in
+[ENVIRONMENT.md](./ENVIRONMENT.md#freeze-window-issue-536) — keep both pages in
+sync when changing parsing or defaults.
+
+| Env var | Type | Default | Effect |
+|---|---|---|---|
+| `FREEZE_WINDOW_ENABLED` | boolean | `false` | Master switch. When falsy, no freeze is ever active and the other `FREEZE_WINDOW_*` vars are ignored. |
+| `FREEZE_WINDOW_START` | ISO-8601 timestamp | _(unset)_ | Start of the freeze window. Required for a scheduled freeze; an unparseable value is treated as unset. |
+| `FREEZE_WINDOW_END` | ISO-8601 timestamp | _(unset)_ | End of the freeze window. Required for a scheduled freeze; an unparseable value is treated as unset. |
+| `FREEZE_WINDOW_MESSAGE` | string | _(built-in)_ | Operator-facing message returned with `403` responses while a freeze is active. |
+
+A freeze is active only when `FREEZE_WINDOW_ENABLED` is truthy **and** the
+current time falls within `[FREEZE_WINDOW_START, FREEZE_WINDOW_END)`. If either
+timestamp is missing or invalid, no scheduled freeze is active (fail open on
+misconfiguration, but the `freeze_window` flag still gates the helpers).
+
+Example — schedule a freeze for a Wave:
+
+```dotenv
+FEATURE_FLAG_FREEZE_WINDOW=on
+FREEZE_WINDOW_ENABLED=true
+FREEZE_WINDOW_START=2026-03-01T00:00:00Z
+FREEZE_WINDOW_END=2026-03-08T00:00:00Z
+FREEZE_WINDOW_MESSAGE="Wave 12 freeze in effect — mutating APIs are paused."
+```
+
+Example — disable freeze-window blocking entirely:
+
+```dotenv
+FEATURE_FLAG_FREEZE_WINDOW=off
+```
+
 ---
 
 ## The flags
