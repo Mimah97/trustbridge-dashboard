@@ -119,6 +119,7 @@ describe("POST /api/maintainer/ban", () => {
         action: "ban",
         githubUsername: "Spammer",
         reason: "Wallet theft report #102",
+        locale: "es",
       })
     );
 
@@ -138,6 +139,7 @@ describe("POST /api/maintainer/ban", () => {
       reason: "Wallet theft report #102",
       actorId: "maintainer-1",
       actorLogin: "alice",
+      locale: "es",
     });
   });
 

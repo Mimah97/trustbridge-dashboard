@@ -1,8 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AlertTriangle, CheckCircle2, PauseCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  PauseCircle,
+  RefreshCw,
+  XCircle,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +27,25 @@ interface NetworkStatusPanelProps {
   config: NetworkConfig;
   className?: string;
 }
+
+/**
+ * Shape returned by `GET /api/health` (see `src/lib/health.ts`).
+ * Fields are optional so partial payloads render without crashing.
+ */
+interface RpcHealth {
+  status?: "ok" | "degraded" | "unavailable" | string;
+  latencyMs?: number | null;
+  network?: string | null;
+  horizonUrl?: string | null;
+  sorobanUrl?: string | null;
+  checkedAt?: string | null;
+  message?: string | null;
+}
+
+type HealthState =
+  | { kind: "loading" }
+  | { kind: "ready"; health: RpcHealth }
+  | { kind: "error"; message: string };
 
 const NETWORK_BADGE_VARIANT: Record<
   StellarNetwork,
@@ -48,6 +74,10 @@ const NETWORK_ALIGNMENT_EXAMPLES = [
     sorobanUrl: "https://mainnet.sorobanrpc.com",
   },
 ] as const;
+
+function isRpcHealth(value: unknown): value is RpcHealth {
+  return typeof value === "object" && value !== null;
+}
 
 function NetworkPausedEmptyState({
   horizonNetwork,
@@ -204,6 +234,124 @@ function NetworkSwitchConfirmation({
           </div>
         </div>
       </div>
+function RpcHealthSection({
+  state,
+  onRefresh,
+}: {
+  state: HealthState;
+  onRefresh: () => void;
+}) {
+  const refreshButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={onRefresh}
+      disabled={state.kind === "loading"}
+      data-testid="rpc-health-refresh"
+    >
+      {state.kind === "loading" ? (
+        <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden="true" />
+      ) : (
+        <RefreshCw className="mr-1 h-4 w-4" aria-hidden="true" />
+      )}
+      Refresh
+    </Button>
+  );
+
+  if (state.kind === "loading") {
+    return (
+      <div
+        data-testid="rpc-health-loading"
+        className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 p-3"
+      >
+        <span className="flex items-center gap-2 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Checking RPC health…
+        </span>
+        {refreshButton}
+      </div>
+    );
+  }
+
+  if (state.kind === "error") {
+    return (
+      <div
+        role="alert"
+        data-testid="rpc-health-error"
+        className="flex items-start justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-destructive"
+      >
+        <span className="flex items-start gap-2">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>
+            <span className="font-medium">RPC health unavailable</span>
+            <span className="mt-1 block text-sm">{state.message}</span>
+          </span>
+        </span>
+        {refreshButton}
+      </div>
+    );
+  }
+
+  const { health } = state;
+  const status = health.status ?? "unavailable";
+  const isHealthy = status === "ok";
+  const isDegraded = status === "degraded";
+
+  return (
+    <div
+      data-testid="rpc-health"
+      data-status={status}
+      className={cn(
+        "space-y-2 rounded-lg border p-3",
+        isHealthy
+          ? "border-emerald-500/30 bg-emerald-500/5"
+          : isDegraded
+            ? "border-amber-500/40 bg-amber-500/10"
+            : "border-destructive/40 bg-destructive/10"
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 font-medium">
+          {isHealthy ? (
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />
+          ) : isDegraded ? (
+            <AlertTriangle className="h-4 w-4 text-amber-500" aria-hidden="true" />
+          ) : (
+            <XCircle className="h-4 w-4 text-destructive" aria-hidden="true" />
+          )}
+          RPC health:{" "}
+          {isHealthy ? "Healthy" : isDegraded ? "Degraded" : "Unavailable"}
+        </span>
+        {refreshButton}
+      </div>
+
+      <dl className="grid gap-2 text-xs sm:grid-cols-2">
+        <div>
+          <dt className="text-muted-foreground">Latency</dt>
+          <dd className="font-medium">
+            {typeof health.latencyMs === "number"
+              ? `${health.latencyMs} ms`
+              : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Network</dt>
+          <dd className="font-medium">{health.network ?? "—"}</dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">Last checked</dt>
+          <dd className="font-medium">
+            {health.checkedAt
+              ? new Date(health.checkedAt).toLocaleString()
+              : "—"}
+          </dd>
+        </div>
+      </dl>
+
+      {health.message && (
+        <p className="text-sm text-muted-foreground">{health.message}</p>
+      )}
     </div>
   );
 }
@@ -226,6 +374,55 @@ export function NetworkStatusPanel({
   );
   const [submitting, setSubmitting] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+const [healthState, setHealthState] = useState<HealthState>({
+    kind: "loading",
+  });
+
+  const loadHealth = useCallback(async (signal?: AbortSignal) => {
+    setHealthState({ kind: "loading" });
+    try {
+      const response = await fetch("/api/health", {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal,
+      });
+
+      if (!response.ok) {
+        setHealthState({
+          kind: "error",
+          message: `Health check failed (HTTP ${response.status}).`,
+        });
+        return;
+      }
+
+      const payload: unknown = await response.json();
+      if (!isRpcHealth(payload)) {
+        setHealthState({
+          kind: "error",
+          message: "Health check returned an unexpected payload.",
+        });
+        return;
+      }
+
+      setHealthState({ kind: "ready", health: payload });
+    } catch (error) {
+      if (signal?.aborted) return;
+      setHealthState({
+        kind: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Unable to reach the health endpoint.",
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadHealth(controller.signal);
+    return () => controller.abort();
+  }, [loadHealth]);
 
   const mismatchWarnings = mismatched
     ? warnings.filter((warning) =>
@@ -310,6 +507,11 @@ export function NetworkStatusPanel({
             </Badge>
           </span>
         </div>
+
+        <RpcHealthSection
+          state={healthState}
+          onRefresh={() => void loadHealth()}
+        />
 
         {mismatched && (
           <NetworkPausedEmptyState

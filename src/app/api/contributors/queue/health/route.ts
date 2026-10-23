@@ -11,6 +11,8 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const metrics = backgroundQueue.getWorkerHealthMetrics();
+  return NextResponse.json({ metrics });
   const health = await backgroundQueue.getWorkerHealthMetrics();
   return NextResponse.json({
     ...health,

@@ -1,11 +1,38 @@
 import { prisma } from "@/lib/prisma";
 import { recordAuditLog } from "@/lib/audit";
+import { buildBanEmail, sendEmailNotification } from "@/lib/email";
 
 export interface BanStatus {
   banned: boolean;
   reason?: string;
   bannedAt?: Date;
 }
+
+export type BanAppealOutcome = "pending" | "approved" | "denied";
+
+export interface BanAppealNote {
+  id: string;
+  githubUsername: string;
+  note: string;
+  outcome: BanAppealOutcome;
+  actorId: string;
+  actorLogin?: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Stable, auditable reason surfaced to banned contributors on register/check.
+ * Kept generic so internal moderation notes are not leaked to the caller.
+ */
+export const BAN_ENFORCE_REASON = "Contributor is banned from Wave registries";
+
+export interface BanEnforcement {
+  allowed: boolean;
+  reason?: string;
+  bannedAt?: Date;
+}
+
+const BAN_APPEAL_OUTCOMES: readonly BanAppealOutcome[] = ["pending", "approved", "denied"];
 
 /**
  * Case-insensitive check if a contributor or GitHub handle is banned.
@@ -67,6 +94,29 @@ export async function isUserBanned(
 }
 
 /**
+ * Single enforce path used by register and check APIs. Resolves ban status via
+ * `isUserBanned` and returns a stable, auditable decision. Internal ban notes
+ * are never surfaced; callers receive `BAN_ENFORCE_REASON` instead.
+ */
+export async function enforceBan({
+  userId,
+  githubUsername,
+}: {
+  userId?: string | null;
+  githubUsername?: string | null;
+}): Promise<BanEnforcement> {
+  const status = await isUserBanned(userId, githubUsername);
+  if (!status.banned) {
+    return { allowed: true };
+  }
+  return {
+    allowed: false,
+    reason: BAN_ENFORCE_REASON,
+    bannedAt: status.bannedAt,
+  };
+}
+
+/**
  * Bans a contributor by GitHub handle with a mandatory reason.
  */
 export async function banContributor({
@@ -74,11 +124,13 @@ export async function banContributor({
   reason,
   actorId,
   actorLogin,
+  locale,
 }: {
   githubUsername: string;
   reason: string;
   actorId: string;
   actorLogin?: string | null;
+  locale?: string;
 }) {
   const normalizedUsername = githubUsername.trim().toLowerCase();
   const trimmedReason = reason.trim();
@@ -136,7 +188,26 @@ export async function banContributor({
     },
   });
 
-  return { success: true, githubUsername: normalizedUsername, reason: trimmedReason };
+  let emailSent = false;
+  if (user?.email) {
+    try {
+      const template = buildBanEmail({
+        githubUsername: normalizedUsername,
+        reason: trimmedReason,
+        locale,
+      });
+      emailSent = await sendEmailNotification({ to: user.email, ...template });
+    } catch (error) {
+      console.error("Failed to build or send contributor ban notice:", error);
+    }
+  }
+
+  return {
+    success: true,
+    githubUsername: normalizedUsername,
+    reason: trimmedReason,
+    emailSent,
+  };
 }
 
 /**
@@ -198,4 +269,72 @@ export async function unbanContributor({
   });
 
   return { success: true, githubUsername: normalizedUsername };
+}
+
+/**
+ * Records a ban appeal note with an outcome for a contributor and writes an
+ * audit trail entry. Validates inputs before any privileged state is touched so
+ * a failure leaves no partial state behind.
+ */
+export async function addBanAppealNote({
+  githubUsername,
+  note,
+  outcome,
+  actorId,
+  actorLogin,
+}: {
+  githubUsername: string;
+  note: string;
+  outcome: BanAppealOutcome;
+  actorId: string;
+  actorLogin?: string | null;
+}): Promise<BanAppealNote> {
+  const normalizedUsername = (githubUsername ?? "").trim().toLowerCase();
+  const trimmedNote = (note ?? "").trim();
+
+  if (!normalizedUsername) {
+    throw new Error("A githubUsername is required to record a ban appeal note.");
+  }
+  if (!trimmedNote) {
+    throw new Error("A note is required to record a ban appeal.");
+  }
+  if (!BAN_APPEAL_OUTCOMES.includes(outcome)) {
+    throw new Error(
+      `Invalid ban appeal outcome. Expected one of: ${BAN_APPEAL_OUTCOMES.join(", ")}.`
+    );
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      githubUsername: {
+        equals: normalizedUsername,
+        mode: "insensitive",
+      },
+    },
+  });
+
+  const appealNote: BanAppealNote = {
+    id: `${normalizedUsername}:${Date.now()}`,
+    githubUsername: normalizedUsername,
+    note: trimmedNote,
+    outcome,
+    actorId,
+    actorLogin: actorLogin ?? null,
+    createdAt: new Date(),
+  };
+
+  await recordAuditLog({
+    action: "contributor.ban_appeal_note",
+    actorId,
+    actorLogin: actorLogin ?? null,
+    targetId: user?.id ?? null,
+    targetLabel: normalizedUsername,
+    metadata: {
+      githubUsername: normalizedUsername,
+      note: trimmedNote,
+      outcome,
+    },
+  });
+
+  return appealNote;
 }

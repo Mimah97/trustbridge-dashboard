@@ -7,14 +7,43 @@ export interface EmailAttachment {
 }
 import { createHash } from "node:crypto";
 
+import enMessages from "../../public/locales/en.json";
+import esMessages from "../../public/locales/es.json";
+import ptMessages from "../../public/locales/pt.json";
+import { resolveLocale, type SupportedLocale } from "@/lib/i18n-config";
 import { withRetry } from "@/lib/retry";
 import { recordAuditLog } from "@/lib/audit";
+
+const EMAIL_MESSAGES: Record<SupportedLocale, typeof enMessages.email> = {
+  en: enMessages.email,
+  es: esMessages.email,
+  pt: ptMessages.email,
+};
+
+export interface LocalizedEmailTemplate {
+  subject: string;
+  body: string;
+}
+
+export interface InviteEmailDetails {
+  inviteCode: string;
+  recipientName?: string;
+  expiresAt?: Date | string | null;
+  locale?: string;
+}
+
+export interface BanEmailDetails {
+  githubUsername: string;
+  reason: string;
+  locale?: string;
+}
 
 export interface EmailNotification {
   to: string;
   subject: string;
   body: string;
   recipientName?: string;
+  idempotencyScope?: string;
   attachments?: EmailAttachment[];
 }
 
@@ -22,6 +51,93 @@ export interface NotReadyNotification extends EmailNotification {
   contributorUsername: string;
   reason: "unfunded" | "no_trustline" | "low_reserve";
   lastCheckedAt?: Date;
+}
+
+export function buildInviteEmail(
+  details: InviteEmailDetails
+): LocalizedEmailTemplate {
+  const locale = resolveLocale(
+    typeof details.locale === "string" ? details.locale : undefined
+  );
+  const messages = EMAIL_MESSAGES[locale].invite;
+  const inviteCode = details.inviteCode.trim();
+  if (!inviteCode) throw new Error("Invite code is required");
+
+  const recipientName = details.recipientName?.trim() || messages.greetingFallback;
+  const expiryDate = formatEmailDate(details.expiresAt, locale);
+  const registrationUrl = getRegistrationUrl();
+
+  return {
+    subject: messages.subject,
+    body: `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#212529;">
+  <h2>${messages.heading}</h2>
+  <p>${interpolateEmailText(messages.greeting, { recipientName })}</p>
+  <p>${messages.codeLabel}: <strong><code>${escapeHtml(inviteCode)}</code></strong></p>
+  <p>${expiryDate ? interpolateEmailText(messages.expires, { date: expiryDate }) : messages.noExpiry}</p>
+  <p>${messages.instructions}</p>
+  <p><a href="${escapeHtml(registrationUrl)}">${messages.action}</a></p>
+</div>`.trim(),
+  };
+}
+
+export function buildBanEmail(details: BanEmailDetails): LocalizedEmailTemplate {
+  const locale = resolveLocale(
+    typeof details.locale === "string" ? details.locale : undefined
+  );
+  const messages = EMAIL_MESSAGES[locale].ban;
+  const githubUsername = details.githubUsername.trim();
+  const reason = details.reason.trim();
+  if (!githubUsername) throw new Error("GitHub username is required");
+  if (!reason) throw new Error("Ban reason is required");
+
+  return {
+    subject: messages.subject,
+    body: `
+<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#212529;">
+  <h2>${messages.heading}</h2>
+  <p>${interpolateEmailText(messages.greeting, { githubUsername })}</p>
+  <p><strong>${messages.reasonLabel}:</strong> ${escapeHtml(reason)}</p>
+  <p>${messages.nextSteps}</p>
+</div>`.trim(),
+  };
+}
+
+function formatEmailDate(
+  value: Date | string | null | undefined,
+  locale: SupportedLocale
+): string | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "long",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function getRegistrationUrl(): string {
+  try {
+    const url = new URL(
+      "/register",
+      process.env.NEXTAUTH_URL?.trim() || "https://trustbridge.dev"
+    );
+    if (url.protocol === "https:" || url.hostname === "localhost") {
+      return url.toString();
+    }
+  } catch {
+    // Fall back to the canonical registration page for malformed configuration.
+  }
+  return "https://trustbridge.dev/register";
+}
+
+function interpolateEmailText(
+  template: string,
+  values: Record<string, string>
+): string {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) =>
+    escapeHtml(values[key] ?? "")
+  );
 }
 
 /**
@@ -38,8 +154,12 @@ function getMaxAttempts(): number {
  * Prevents duplicate emails when Resend retries a 429 and the first
  * request actually succeeded (network timeout, etc.).
  */
-function buildIdempotencyKey(to: string, subject: string): string {
-  const payload = `${to}:${subject}`;
+function buildIdempotencyKey(
+  to: string,
+  subject: string,
+  scope?: string
+): string {
+  const payload = scope ? `${to}:${subject}:${scope}` : `${to}:${subject}`;
   return createHash("sha256").update(payload).digest("hex").slice(0, 32);
 }
 
@@ -112,7 +232,8 @@ async function sendViaResend(
   const maxAttempts = getMaxAttempts();
   const idempotencyKey = buildIdempotencyKey(
     notification.to,
-    notification.subject
+    notification.subject,
+    notification.idempotencyScope
   );
 
   try {
@@ -130,14 +251,6 @@ async function sendViaResend(
       }));
     }
 
-    const response = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(payload),
-    });
     await withRetry(
       async (attempt) => {
         const response = await fetch("https://api.resend.com/emails", {
@@ -147,12 +260,7 @@ async function sendViaResend(
             Authorization: `Bearer ${apiKey}`,
             "Idempotency-Key": idempotencyKey,
           },
-          body: JSON.stringify({
-            from: process.env.EMAIL_FROM || "noreply@trustbridge.dev",
-            to: notification.to,
-            subject: notification.subject,
-            html: notification.body,
-          }),
+          body: JSON.stringify(payload),
         });
 
         if (!response.ok) {

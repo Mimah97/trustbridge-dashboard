@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { isAuthorizedScheduler, requireMaintainerSession } from "@/lib/api-auth";
 import {
+  API_KEY_RATE_LIMIT,
+  authenticateApiKey,
+  buildRateLimitHeaders,
+  hasScope,
+  insufficientScopeResponse,
+} from "@/lib/api-key-auth";
+import {
   getLastCronExportHealth,
   runCronExport,
 } from "@/lib/cron-export";
@@ -27,13 +34,39 @@ export async function POST(request: NextRequest) {
   const session = await requireMaintainerSession();
   const isScheduler = isAuthorizedScheduler(request);
 
-  if (!session && !isScheduler) {
+  // Automation API keys may trigger cron runs with the `cron:trigger` scope.
+  let apiKeyActor: { createdById: string; name: string } | null = null;
+  if (!session && !isScheduler && request.headers.get("authorization")) {
+    const apiKeyAuth = await authenticateApiKey(request);
+    if (!apiKeyAuth) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    if ("rateLimited" in apiKeyAuth) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status: 429,
+          headers: buildRateLimitHeaders(
+            apiKeyAuth.result,
+            API_KEY_RATE_LIMIT.maxRequests
+          ),
+        }
+      );
+    }
+    if (!hasScope(apiKeyAuth.scopes, "cron:trigger")) {
+      return insufficientScopeResponse("cron:trigger");
+    }
+    apiKeyActor = apiKeyAuth;
+  }
+
+  if (!session && !isScheduler && !apiKeyActor) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const result = await runCronExport({
-    actorId: session?.user?.id ?? null,
-    actorLogin: session?.user?.githubUsername ?? "scheduler:cron",
+    actorId: session?.user?.id ?? apiKeyActor?.createdById ?? null,
+    actorLogin:
+      session?.user?.githubUsername ?? (apiKeyActor ? `api-key:${apiKeyActor.name}` : "scheduler:cron"),
   });
 
   return NextResponse.json(result, {

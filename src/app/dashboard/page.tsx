@@ -29,6 +29,7 @@ import {
 import { FreezeWindowBanner } from "@/components/FreezeWindowBanner";
 import { countReadyContributors } from "@/lib/contributors";
 import { useJobProgress } from "@/lib/use-job-progress";
+import { useI18n } from "@/lib/i18n-context";
 // Single data-fetching strategy (#307): usePaginatedContributors drives both
 // the prev/next pager and the panels that need the full contributor list.
 // useInfiniteContributors was removed to eliminate the duplicate
@@ -51,6 +52,7 @@ interface BatchRecheckResponse {
 
 export default function DashboardPage() {
   const queryClient = useQueryClient();
+  const { locale } = useI18n();
   const {
     event,
     isStreaming,
@@ -152,7 +154,7 @@ export default function DashboardPage() {
       const res = await fetch("/api/maintainer/ban", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ githubUsername, action, reason }),
+        body: JSON.stringify({ githubUsername, action, reason, locale }),
       });
       if (!res.ok) {
         const json = await res.json();
@@ -216,7 +218,7 @@ export default function DashboardPage() {
             : null;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       {/*
         The dashboard's own skip link. `layout.tsx` gets a keyboard user to
         `main`; from there the contributor table is still past the re-check
@@ -455,6 +457,6 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

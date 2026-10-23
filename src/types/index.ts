@@ -105,6 +105,7 @@ export type AuditAction =
   | "checklist.update"
   | "network_config_mismatch_detected"
   | "contract.sync"
+  | "soroban.outbox.replayed"
   | "profile.privacy_updated";
 
 export interface AuditLogEntry {
@@ -256,5 +257,50 @@ export interface SorobanEventCursorRecord {
   lastSyncedAt: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;
+}
+
+// ---------------------------------------------------------------------------
+// WavePrep workspace view-model (#613)
+// ---------------------------------------------------------------------------
+
+/**
+ * Typed view-model for the WavePrep workspace, shared by the dashboard page
+ * and `WavePrepWorkspace` stories/panels to prevent prop drift.
+ *
+ * Data-only: event callbacks stay on the component props
+ * (`WavePrepWorkspaceProps`) so stories can stub them independently.
+ */
+export interface WavePrepWorkspaceViewModel {
+  /** Full contributor list backing the workspace stats and filters. */
+  contributors: ContributorRow[];
+  /** Wave number shown in the workspace header, when known. */
+  waveNumber?: number;
+  /** True while a CSV/JSON export triggered from the workspace is pending. */
+  isExporting?: boolean;
+}
+
+/**
+ * Build a {@link WavePrepWorkspaceViewModel} from untrusted input.
+ *
+ * @throws {Error} with a stable `waveprep: ...` message when `input` is not
+ * an array of contributor rows. An empty array is valid (zero contributors).
+ */
+export function createWavePrepWorkspaceViewModel(
+  input: unknown,
+  opts?: { waveNumber?: number; isExporting?: boolean }
+): WavePrepWorkspaceViewModel {
+  if (!Array.isArray(input)) {
+    throw new Error("waveprep: contributors must be an array");
+  }
+  for (const row of input) {
+    if (!row || typeof row !== "object") {
+      throw new Error("waveprep: contributors must be contributor rows");
+    }
+  }
+  return {
+    contributors: input as ContributorRow[],
+    ...(opts?.waveNumber !== undefined ? { waveNumber: opts.waveNumber } : {}),
+    ...(opts?.isExporting !== undefined ? { isExporting: opts.isExporting } : {}),
+  };
 }
 

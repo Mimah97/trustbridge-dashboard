@@ -63,6 +63,24 @@ export async function recordNetworkSwitchAudit(input: {
       fromNetwork: input.fromNetwork,
       toNetwork: input.toNetwork,
       confirmed: input.confirmed,
+* Persist a maintainer action to the audit log, surfacing failures.
+ *
+ * Unlike {@link recordAuditLog}, this variant rejects when the audit write
+ * fails. Use it for privileged flows (e.g. ban appeal notes) where an
+ * unaudited action must not be allowed to succeed.
+ */
+export async function recordAuditLogStrict(
+  input: RecordAuditInput,
+): Promise<void> {
+  await prisma.auditLog.create({
+    data: {
+      action: input.action,
+      actorId: input.actorId ?? null,
+      actorLogin: input.actorLogin ?? null,
+      targetId: input.targetId ?? null,
+      targetLabel: input.targetLabel ?? null,
+      metadata:
+        (input.metadata as Prisma.InputJsonValue | undefined) ?? undefined,
     },
   });
 }

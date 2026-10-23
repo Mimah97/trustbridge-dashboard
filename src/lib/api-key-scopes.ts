@@ -1,4 +1,4 @@
-export const API_KEY_SCOPE_VALUES = ["export:read"] as const;
+export const API_KEY_SCOPE_VALUES = ["export:read", "cron:trigger"] as const;
 
 export type ApiKeyScope = (typeof API_KEY_SCOPE_VALUES)[number];
 
@@ -10,6 +10,12 @@ export const API_KEY_SCOPE_DEFINITIONS: Record<
         bit: 0,
         mask: 1 << 0,
         description: "Read contributor export endpoints; does not allow writes.",
+    },
+    "cron:trigger": {
+        bit: 1,
+        mask: 1 << 1,
+        description:
+            "Trigger scheduled cron export/digest runs; does not grant maintainer session rights.",
     },
 };
 

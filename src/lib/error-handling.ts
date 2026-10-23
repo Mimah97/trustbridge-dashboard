@@ -1,6 +1,13 @@
 /**
  * Error handling utilities for React components.
  * Provides error boundary support and error recovery strategies.
+ *
+ * Also defines the shared API error JSON shape used across `src/app/api/`
+ * route handlers so clients can rely on a single documented envelope:
+ *
+ *   { "error": { "code": string, "message": string, "details"?: unknown } }
+ *
+ * See `docs/error-taxonomy.md` for the full taxonomy.
  */
 
 export interface ErrorInfo {
@@ -129,6 +136,84 @@ export const errorMessages: Record<string, string> = {
  */
 export function getUserFriendlyMessage(errorCode: string): string {
   return errorMessages[errorCode] || errorMessages.UNKNOWN_ERROR;
+}
+
+/**
+ * Canonical API error codes shared across route handlers and clients.
+ * Keep in sync with `docs/error-taxonomy.md`.
+ */
+export type ApiErrorCode =
+  | 'VALIDATION_ERROR'
+  | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'RATE_LIMITED'
+  | 'SERVER_ERROR'
+  | 'UNKNOWN_ERROR';
+
+/**
+ * Shared API error JSON shape emitted by every route handler.
+ */
+export interface ApiErrorBody {
+  error: {
+    code: ApiErrorCode;
+    message: string;
+    details?: unknown;
+  };
+}
+
+/**
+ * Default HTTP status for each API error code.
+ */
+export const apiErrorStatus: Record<ApiErrorCode, number> = {
+  VALIDATION_ERROR: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  CONFLICT: 409,
+  RATE_LIMITED: 429,
+  SERVER_ERROR: 500,
+  UNKNOWN_ERROR: 500,
+};
+
+/**
+ * Build the shared API error body. Falls back to a stable user-friendly
+ * message when none is provided so clients always have something to toast.
+ */
+export function createApiError(
+  code: ApiErrorCode,
+  message?: string,
+  details?: unknown
+): ApiErrorBody {
+  const body: ApiErrorBody = {
+    error: {
+      code,
+      message: message || getUserFriendlyMessage(code),
+    },
+  };
+
+  if (details !== undefined) {
+    body.error.details = details;
+  }
+
+  return body;
+}
+
+/**
+ * Build a JSON `Response` with the shared error envelope and matching status.
+ * Route handlers should return this instead of ad-hoc `{ error: string }`.
+ */
+export function apiErrorResponse(
+  code: ApiErrorCode,
+  message?: string,
+  details?: unknown,
+  status?: number
+): Response {
+  return new Response(JSON.stringify(createApiError(code, message, details)), {
+    status: status ?? apiErrorStatus[code],
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 /**

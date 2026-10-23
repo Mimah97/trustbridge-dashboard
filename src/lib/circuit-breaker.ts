@@ -158,3 +158,81 @@ export class CircuitBreakerOpenError extends Error {
     this.name = "CircuitBreakerOpenError";
   }
 }
+
+/**
+ * Shared, process-local circuit breakers for outbound Stellar calls.
+ *
+ * Horizon and Soroban RPC are independent upstreams, so each gets its own
+ * breaker. This keeps a Soroban outage from tripping the Horizon breaker (and
+ * vice versa) while still letting the dashboard degrade gracefully when either
+ * upstream is unhealthy.
+ *
+ * Tunable via the existing HORIZON_CB_* env vars (see getDefaultOptions).
+ */
+export const horizonCircuitBreaker = new CircuitBreaker();
+export const sorobanCircuitBreaker = new CircuitBreaker();
+
+export type OutboundUpstream = "horizon" | "soroban";
+
+export function getCircuitBreakerFor(
+  upstream: OutboundUpstream
+): CircuitBreaker {
+  return upstream === "soroban" ? sorobanCircuitBreaker : horizonCircuitBreaker;
+}
+
+export interface DegradedResult<T> {
+  ok: false;
+  degraded: true;
+  upstream: OutboundUpstream;
+  retryAfterMs: number;
+  message: string;
+  cause?: unknown;
+}
+
+export interface SuccessResult<T> {
+  ok: true;
+  degraded: false;
+  data: T;
+}
+
+export type BreakerResult<T> = SuccessResult<T> | DegradedResult<T>;
+
+/**
+ * Run an outbound call through the breaker for the given upstream and return a
+ * discriminated result instead of throwing. Callers (check-api / check-api-client)
+ * can then surface a clear degraded state to the UI without try/catch noise.
+ *
+ * - Happy path: `{ ok: true, degraded: false, data }`.
+ * - Open breaker: `{ ok: false, degraded: true, retryAfterMs, message }`.
+ * - Upstream failure: `{ ok: false, degraded: true, retryAfterMs: 0, message, cause }`.
+ */
+export async function callWithBreaker<T>(
+  upstream: OutboundUpstream,
+  fn: () => Promise<T>
+): Promise<BreakerResult<T>> {
+  const breaker = getCircuitBreakerFor(upstream);
+  try {
+    const data = await breaker.call(fn);
+    return { ok: true, degraded: false, data };
+  } catch (error) {
+    if (error instanceof CircuitBreakerOpenError) {
+      return {
+        ok: false,
+        degraded: true,
+        upstream,
+        retryAfterMs: error.remainingMs,
+        message: `${upstream} is temporarily unavailable. Retry in ${Math.ceil(
+          error.remainingMs / 1000
+        )}s.`,
+      };
+    }
+    return {
+      ok: false,
+      degraded: true,
+      upstream,
+      retryAfterMs: 0,
+      message: `${upstream} request failed. Please try again.`,
+      cause: error,
+    };
+  }
+}

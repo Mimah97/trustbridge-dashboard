@@ -28,8 +28,18 @@ import { useEffect, useState } from "react";
  *   and failed entries are retried with a clear, stable error surfaced.
  * - The banner copy below reflects this so users know their pending rechecks
  *   will be sent automatically once the connection returns.
+* - `forceOffline` lets Storybook/tests render the offline state
+ *   deterministically without depending on the real `navigator.onLine`.
  */
-export function OfflineBanner() {
+export interface OfflineBannerProps {
+  /**
+   * When provided, overrides the live network state. Intended for
+   * Storybook visual QA and tests; production call sites omit it.
+   */
+  forceOffline?: boolean;
+}
+
+export function OfflineBanner({ forceOffline }: OfflineBannerProps = {}) {
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -48,7 +58,9 @@ export function OfflineBanner() {
     };
   }, []);
 
-  if (!isOffline) return null;
+  const offline = forceOffline ?? isOffline;
+
+  if (!offline) return null;
 
   return (
     <div

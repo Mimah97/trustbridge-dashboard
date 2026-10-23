@@ -10,9 +10,18 @@ export interface FreezeWindowStatus {
 }
 
 /**
- * Checks if the wave freeze window is currently active based on environment variables
- * or settings. During an active freeze window, mutating operations (rechecks, address changes)
- * are disabled while read operations stay available.
+ * Environment variables consumed by the freeze-window guard. Documented in
+ * `docs/ENVIRONMENT.md` and referenced from `docs/FEATURE_FLAGS.md`.
+ *
+ * - FREEZE_WINDOW_ENABLED: "true" | "false" (case-insensitive, trimmed).
+ *   "false" explicitly disables the window regardless of start/end.
+ * - FREEZE_WINDOW_START: ISO-8601 timestamp (e.g. 2025-01-01T00:00:00Z).
+ * - FREEZE_WINDOW_END: ISO-8601 timestamp (e.g. 2025-01-08T00:00:00Z).
+ *
+ * The window is active when now is within [start, end] inclusive. Missing,
+ * unparseable, or inverted (start > end) values fail closed to inactive.
+ * The `freeze_window` feature flag must also be enabled for the guard to
+ * block requests (see `enforceFreezeWindowGuard`).
  */
 export function isFreezeWindowActive(now = new Date()): FreezeWindowStatus {
   const enabledStr = process.env.FREEZE_WINDOW_ENABLED?.trim().toLowerCase();

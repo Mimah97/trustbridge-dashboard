@@ -10,6 +10,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   "registration.restore": "Restored a registration",
   network_config_mismatch_detected: "Detected a Horizon/Soroban network mismatch",
   "contract.sync": "Synced Soroban contract registrations",
+  "soroban.outbox.replayed": "Replayed a Soroban outbox item",
   "export.csv": "Exported contributors CSV",
   "export.csv.failed": "Failed to export contributors CSV",
   "export.cron": "Automated nightly treasury CSV export",

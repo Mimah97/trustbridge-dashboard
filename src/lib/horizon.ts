@@ -136,6 +136,8 @@ export async function checkStellarAddress(
   }
 
   try {
+    const account = await horizonCircuitBreaker.call(() =>
+      withRetry(() => server.loadAccount(trimmed), {
     const startedAt = Date.now();
     const account = await horizonCircuitBreaker.call(() =>
       withRetry(() => loadAccountFromHorizon(trimmed), {

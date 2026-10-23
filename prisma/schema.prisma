@@ -197,6 +197,12 @@ model QueueJob {
   @@index([type, status])
 }
 
+model CronExportLock {
+  id             String   @id
+  token          String
+  leaseExpiresAt DateTime
+}
+
 /// Optional database source for the feature-flags module (see src/lib/feature-flags.ts).
 /// Only consulted when FEATURE_FLAGS_DB_ENABLED is truthy; env overrides always win.
 model FeatureFlag {
@@ -223,6 +229,8 @@ model ApiKey {
   createdById     String
   createdBy       User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
   expiresAt       DateTime?
+  /// Timestamp of the most recent successful authentication with this key.
+  /// Updated on each verified request; null until the key is first used.
   lastUsedAt      DateTime?
   revokedAt       DateTime?
   createdAt       DateTime  @default(now())
@@ -230,6 +238,7 @@ model ApiKey {
   @@index([keyHash])
   @@index([createdById])
   @@index([createdAt])
+  @@index([lastUsedAt])
 }
 
 model Account {
@@ -246,131 +255,6 @@ model Account {
   scope             String?
   id_token          String? @db.Text
   session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fi
 
-  @@unique([provider, providerAccountId])
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  maintainerOrgId String @default("default")
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model VerificationToken {
-  maintainerOrgId String   @default("default")
-  identifier      String
-  token           String   @unique
-  expires         DateTime
-
-  @@unique([identifier, token])
-}
-
-model ApiKey {
-  id        String    @id @default(cuid())
-  name      String
-  /// SHA-256 hex digest of the raw key. The raw key is shown exactly once
-  /// and never stored in plaintext — see src/lib/invite-helpers.ts for the
-  /// same pattern used for invite tokens.
-  keyHash   String    @unique
-  scopes    String[]
-  createdAt DateTime  @default(now())
-  revokedAt DateTime?
-
-  @@index([createdAt])
-}
-
-model Invite {
-  id         String    @id @default(cuid())
-  email      String
-  /// SHA-256 hex digest of the raw token. Only the hash is persisted.
-  tokenHash  String    @unique
-  expiresAt  DateTime
-  usedAt     DateTime?
-  createdAt  DateTime  @default(now())
-
-  @@index([email])
-  @@index([expiresAt])
-}
-enum NotificationType {
-  BATCH_JOB_COMPLETED
-  BATCH_JOB_FAILED
-  READINESS_CHANGED
-  DISPUTE_SUBMITTED
-  INVITE_USED
-}
-
-model Notification {
-  id              String           @id @default(cuid())
-  maintainerOrgId String           @default("default")
-  userId          String?
-  user            User?            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type            NotificationType
-  title           String
-  body            String
-  read            Boolean          @default(false)
-  metadata        Json?
-  createdAt       DateTime         @default(now())
-  readAt          DateTime?
-
-  @@index([userId])
-  @@index([maintainerOrgId])
-  @@index([read])
-  @@index([createdAt])
-}
-
-model SorobanEventCursor {
-  id              String   @id @default(cuid())
-  maintainerOrgId String   @default("default")
-  eventType       String   @default("contract")
-  cursor          String
-  lastPagingToken String?
-  lastSyncedAt    DateTime @default(now())
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@unique([maintainerOrgId, eventType])
-  @@index([maintainerOrgId])
-}
-
-model SorobanOutbox {
-  id              String   @id @default(cuid())
-  maintainerOrgId String   @default("default")
-  action          String   @default("register")
-  payload         Json
-  status          String   @default("PENDING")
-  attempts        Int      @default(0)
-  maxAttempts     Int      @default(5)
-  lastError       String?
-  nextAttemptAt   DateTime @default(now())
-  idempotencyKey  String?  @unique
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([status, createdAt])
-  @@index([status, nextAttemptAt])
-  @@index([maintainerOrgId])
-}
-
-model RegistrationConflict {
-  id               String   @id @default(cuid())
-  maintainerOrgId  String   @default("default")
-  attemptedAddress String
-  attemptedUserId  String
-  attemptedUser    User     @relation("AttemptedConflicts", fields: [attemptedUserId], references: [id], onDelete: Cascade)
-  existingUserId   String
-  existingUser     User     @relation("ExistingConflicts", fields: [existingUserId], references: [id], onDelete: Cascade)
-  resolved         Boolean  @default(false)
-  resolvedAt       DateTime?
-  resolvedById     String?
-  createdAt        DateTime @default(now())
-
-  @@index([attemptedAddress])
-  @@index([attemptedUserId])
-  @@index([existingUserId])
-  @@index([maintainerOrgId])
-  @@index([createdAt])
-}
+/* … truncated 3755 chars — edit only what you need near the top … */

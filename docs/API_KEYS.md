@@ -162,7 +162,8 @@ Scopes are submitted and stored as named strings (for example, `scopes: ["export
 
 | Scope | Bit | Mask | Permission |
 |---|---:|---:|---|
-| `export:read` | 0 | `1` (`0b0001`) | Read `/api/contributors/export/*`; no write access |
+| `export:read` | 0 | `1` (`0b0001`) | Read `/api/contributors/export/*` and `/api/treasury/export`; no write access |
+| `cron:trigger` | 1 | `2` (`0b0010`) | Trigger `POST /api/cron/export` and `POST /api/cron/digest`; no session rights |
 
 Bits are zero-based and masks are powers of two (`1 << bit`). Unknown scope names grant no permissions and are rejected when creating keys. The wildcard `*` is reserved for internal authorization use and cannot be created through the management API. New scopes must be assigned the next unused bit and added to the shared scope definitions before they are exposed.
 
@@ -267,8 +268,18 @@ Store the secret as `TRUSTBRIDGE_API_KEY` in your repository secrets (Settings â
 |--------|------|-------------|
 | `GET` | `/api/contributors/export/csv` | Download contributors as CSV |
 | `GET` | `/api/contributors/export/json` | Download contributors as JSON |
+| `GET` / `POST` | `/api/treasury/export` | Treasury payout export (JSON, optional CSV) |
 
-Both endpoints accept either a maintainer browser session **or** a valid `export:read` API key. A request with neither receives `401 Unauthorized`.
+Both endpoints accept either a maintainer browser session **or** a valid `export:read` API key. A request with neither receives `401 Unauthorized`; a valid key without the scope receives `403` with code `insufficient_scope`.
+
+## Endpoints protected by `cron:trigger`
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/cron/export` | Trigger the nightly treasury CSV export run |
+| `POST` | `/api/cron/digest` | Trigger the not-ready contributor digest run |
+
+These endpoints accept a maintainer session, the scheduler `CRON_SECRET` bearer token, **or** a valid API key carrying the `cron:trigger` scope. Session behaviour is unchanged. A valid key without the scope receives `403` with code `insufficient_scope`. Expired or revoked keys are rejected before the scope check.
 
 ---
 
