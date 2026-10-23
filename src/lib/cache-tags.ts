@@ -36,6 +36,9 @@
  *      - `POST /api/register`
  *      - `POST /api/contributors` (batch recheck)
  *      - `POST /api/contributors/[id]` (single recheck)
+ *      - `POST /api/maintainer/ban` (ban / unban)
+ *      - `POST /api/registrations/[id]/restore` (restore)
+ *      - `PATCH /api/disputes` (dispute status resolution)
  *
  * 3. **`buildContributorListCacheControl()`** — a `Cache-Control` header value
  *    for `GET /api/contributors` responses.  The contributor list is

@@ -66,6 +66,26 @@
     "success": "Registro bem-sucedido",
     "error": "Falha no registro"
   },
+  "email": {
+    "invite": {
+      "subject": "Você recebeu um convite para o TrustBridge",
+      "heading": "Seu convite para o TrustBridge",
+      "greeting": "Olá, {recipientName}. Você foi convidado para participar do programa de contribuidores do TrustBridge.",
+      "greetingFallback": "contribuidor",
+      "codeLabel": "Código do convite",
+      "expires": "Este convite expira em {date}.",
+      "noExpiry": "Este convite não tem data de validade.",
+      "instructions": "Use este código ao concluir seu cadastro no TrustBridge.",
+      "action": "Abrir cadastro"
+    },
+    "ban": {
+      "subject": "Aviso sobre o acesso à sua conta do TrustBridge",
+      "heading": "Sua conta de contribuidor foi suspensa",
+      "greeting": "Olá, @{githubUsername}. Um mantenedor do TrustBridge suspendeu sua conta de contribuidor.",
+      "reasonLabel": "Motivo",
+      "nextSteps": "Se você acredita que a ação foi um erro, entre em contato com os mantenedores do TrustBridge para conversar."
+    }
+  },
   "date": {
     "formats": {
       "short": "{day}/{month}/{year}",

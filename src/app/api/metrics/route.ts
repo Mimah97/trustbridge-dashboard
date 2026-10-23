@@ -22,7 +22,7 @@ export const dynamic = "force-dynamic";
  * - recent audit log summary (last 50 entries)
  * - circuit-breaker & rate-limit env configuration
  *
- * Requires an authenticated maintainer session.
+ * Requires an authenticated operator session.
  */
 export async function GET() {
   const session = await requireOperator("metrics.read");

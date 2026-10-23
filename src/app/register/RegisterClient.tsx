@@ -348,7 +348,7 @@ export function RegisterClient() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6" data-testid="register-page">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-10 sm:px-6" data-testid="register-page">
       {maintainerError && (
         <div
           className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:border-amber-400/40 dark:bg-amber-950/40 dark:text-amber-200"
@@ -528,6 +528,6 @@ export function RegisterClient() {
       <div className="mt-12 border-t pt-8">
         <OutreachTemplateGenerator />
       </div>
-    </div>
+    </main>
   );
 }

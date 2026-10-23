@@ -5,8 +5,10 @@ import { authOptions } from "@/lib/auth";
 import { requireOperator } from "@/lib/api-auth";
 import {
   API_KEY_RATE_LIMIT,
+  authenticateApiKey,
   buildRateLimitHeaders,
-  requireApiKeyScope,
+  hasScope,
+  insufficientScopeResponse,
 } from "@/lib/api-key-auth";
 import { assertSameOrigin } from "@/lib/csrf";
 import { prisma } from "@/lib/prisma";
@@ -80,8 +82,44 @@ function toExportItem(reg: {
 export async function GET(request?: NextRequest) {
   const session = await getServerSession(authOptions);
 
-  if (!session?.user?.id || !session.user.isMaintainer) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  let actorId: string | null = null;
+  let actorLogin: string | null = null;
+  let exportedBy: string;
+
+  if (session?.user?.id && session.user.isMaintainer) {
+    actorId = session.user.id;
+    actorLogin = session.user.githubUsername ?? null;
+    exportedBy = session.user.email ?? session.user.githubUsername ?? "";
+  } else {
+    // Maintainer session absent — fall back to a scoped API key.
+    if (!request) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const apiKeyAuth = await authenticateApiKey(request);
+    if (!apiKeyAuth) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    if ("rateLimited" in apiKeyAuth) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        {
+          status: 429,
+          headers: buildRateLimitHeaders(
+            apiKeyAuth.result,
+            API_KEY_RATE_LIMIT.maxRequests
+          ),
+        }
+      );
+    }
+
+    if (!hasScope(apiKeyAuth.scopes, "export:read")) {
+      return insufficientScopeResponse("export:read");
+    }
+
+    actorId = apiKeyAuth.createdById;
+    actorLogin = `api-key:${apiKeyAuth.name}`;
+    exportedBy = actorLogin;
   }
 
   const pagination = parseExportPagination(request?.nextUrl?.searchParams);
@@ -119,8 +157,8 @@ export async function GET(request?: NextRequest) {
 
   await recordAuditLog({
     action: "treasury.export",
-    actorId: session.user.id,
-    actorLogin: session.user.githubUsername ?? null,
+    actorId,
+    actorLogin,
     metadata: {
       totalContributors,
       readyCount,
@@ -137,7 +175,7 @@ export async function GET(request?: NextRequest) {
     nextOffset: number | null;
   } = {
     exportedAt: new Date().toISOString(),
-    exportedBy: session.user.email ?? session.user.githubUsername ?? "",
+    exportedBy,
     totalContributors,
     readyCount,
     notReadyCount,
@@ -162,7 +200,7 @@ export async function POST(request: NextRequest) {
     actorId = session.user.id;
     actorLogin = session.user.githubUsername ?? null;
   } else {
-    const apiKeyAuth = await requireApiKeyScope(request, "export:read");
+    const apiKeyAuth = await authenticateApiKey(request);
     if (!apiKeyAuth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -178,6 +216,10 @@ export async function POST(request: NextRequest) {
           ),
         }
       );
+    }
+
+    if (!hasScope(apiKeyAuth.scopes, "export:read")) {
+      return insufficientScopeResponse("export:read");
     }
 
     actorId = apiKeyAuth.createdById;

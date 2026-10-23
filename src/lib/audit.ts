@@ -39,6 +39,29 @@ export async function recordAuditLog(input: RecordAuditInput): Promise<void> {
   }
 }
 
+/**
+ * Persist a maintainer action to the audit log, surfacing failures.
+ *
+ * Unlike {@link recordAuditLog}, this variant rejects when the audit write
+ * fails. Use it for privileged flows (e.g. ban appeal notes) where an
+ * unaudited action must not be allowed to succeed.
+ */
+export async function recordAuditLogStrict(
+  input: RecordAuditInput,
+): Promise<void> {
+  await prisma.auditLog.create({
+    data: {
+      action: input.action,
+      actorId: input.actorId ?? null,
+      actorLogin: input.actorLogin ?? null,
+      targetId: input.targetId ?? null,
+      targetLabel: input.targetLabel ?? null,
+      metadata:
+        (input.metadata as Prisma.InputJsonValue | undefined) ?? undefined,
+    },
+  });
+}
+
 /** Read the most recent audit log entries, newest first. */
 export async function getRecentAuditLog(limit = 50): Promise<AuditLogEntry[]> {
   const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 200);

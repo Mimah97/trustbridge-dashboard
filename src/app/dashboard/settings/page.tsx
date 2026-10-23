@@ -1,13 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 import { NetworkStatusPanel } from "@/components/NetworkStatusPanel";
 import { SessionPanel } from "@/components/SessionPanel";
 import { ApiKeyPanel } from "@/components/ApiKeyPanel";
 import { RestorePanel } from "@/components/RestorePanel";
+import { DlqPanel } from "@/components/DlqPanel";
 import {
   Card,
   CardContent,
@@ -19,6 +20,19 @@ import { Badge } from "@/components/ui/badge";
 import { describeAuditAction } from "@/lib/audit-format";
 import { formatRelativeTime } from "@/lib/utils";
 import type { AuditLogEntry, NetworkConfig } from "@/types";
+
+// ContractSyncResult is mirrored here to avoid importing from the server-only
+// contract-sync module (which has `import "server-only"` at the top).
+interface ContractSyncResult {
+  status: "ok" | "error" | "skipped";
+  startedAt: string;
+  durationMs: number;
+  synced?: number;
+  created?: number;
+  updated?: number;
+  unchanged?: number;
+  errors?: string[];
+}
 
 interface AuditLogResponse {
   entries: AuditLogEntry[];
@@ -36,6 +50,165 @@ interface FeatureFlagEntry {
 interface FeatureFlagsResponse {
   flags: FeatureFlagEntry[];
 }
+
+// ---------------------------------------------------------------------------
+// ContractSyncPanel — polls /api/contract-sync every 30 s (issue #554)
+// ---------------------------------------------------------------------------
+
+type SyncStatus = "loading" | "success" | "error" | "skipped" | "empty";
+
+function ContractSyncPanel() {
+  const [status, setStatus] = useState<SyncStatus>("loading");
+  const [lastRun, setLastRun] = useState<ContractSyncResult | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function poll() {
+      try {
+        const response = await fetch("/api/contract-sync");
+        if (!mounted) return;
+        if (!response.ok) {
+          setStatus("error");
+          setFetchError(`HTTP ${response.status}`);
+          return;
+        }
+        const data = (await response.json()) as { lastRun: ContractSyncResult | null };
+        if (!mounted) return;
+        if (!data.lastRun) {
+          setLastRun(null);
+          setStatus("empty");
+        } else if (data.lastRun.status === "ok") {
+          setLastRun(data.lastRun);
+          setStatus("success");
+        } else if (data.lastRun.status === "error") {
+          setLastRun(data.lastRun);
+          setStatus("error");
+        } else if (data.lastRun.status === "skipped") {
+          setLastRun(data.lastRun);
+          setStatus("skipped");
+        }
+        setFetchError(null);
+      } catch (err) {
+        if (!mounted) return;
+        setStatus("error");
+        setFetchError(err instanceof Error ? err.message : "Fetch failed");
+      }
+    }
+
+    void poll();
+    const id = setInterval(() => void poll(), 30_000);
+
+    return () => {
+      mounted = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const badgeVariant: Record<SyncStatus, "ready" | "secondary" | "destructive"> = {
+    loading: "secondary",
+    success: "ready",
+    error: "destructive",
+    skipped: "secondary",
+    empty: "secondary",
+  };
+
+  return (
+    <Card data-testid="contract-sync-panel">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          {status === "loading" ? (
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden="true" />
+          ) : status === "success" ? (
+            <CheckCircle2 className="h-5 w-5 text-emerald-500" aria-hidden="true" />
+          ) : (
+            <AlertTriangle className="h-5 w-5 text-destructive" aria-hidden="true" />
+          )}
+          Contract sync
+        </CardTitle>
+        <CardDescription>
+          Status of the most recent Soroban contract-to-Postgres sync run.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {status === "loading" && (
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading sync status…
+          </div>
+        )}
+
+        {status !== "loading" && (
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground">Status:</span>
+            <Badge variant={badgeVariant[status]}>{status}</Badge>
+          </div>
+        )}
+
+        {status === "empty" && (
+          <p className="text-muted-foreground" data-testid="contract-sync-empty">
+            No sync has run yet.
+          </p>
+        )}
+
+        {fetchError && (
+          <p className="text-destructive">{fetchError}</p>
+        )}
+
+        {lastRun && status !== "empty" && (
+          <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            {lastRun.synced != null && (
+              <>
+                <div>
+                  <dt className="text-muted-foreground">Synced</dt>
+                  <dd className="font-medium">{lastRun.synced}</dd>
+                </div>
+              </>
+            )}
+            {lastRun.created != null && (
+              <div>
+                <dt className="text-muted-foreground">Created</dt>
+                <dd className="font-medium">{lastRun.created}</dd>
+              </div>
+            )}
+            {lastRun.updated != null && (
+              <div>
+                <dt className="text-muted-foreground">Updated</dt>
+                <dd className="font-medium">{lastRun.updated}</dd>
+              </div>
+            )}
+            {lastRun.unchanged != null && (
+              <div>
+                <dt className="text-muted-foreground">Unchanged</dt>
+                <dd className="font-medium">{lastRun.unchanged}</dd>
+              </div>
+            )}
+          </dl>
+        )}
+
+        {lastRun?.errors && lastRun.errors.length > 0 && (
+          <ul className="space-y-1 text-xs text-destructive">
+            {lastRun.errors.map((e) => (
+              <li key={e}>{e}</li>
+            ))}
+          </ul>
+        )}
+
+        {lastRun?.startedAt && (
+          <p className="text-xs text-muted-foreground">
+            Last run {formatRelativeTime(lastRun.startedAt)}
+            {lastRun.durationMs != null ? ` (${lastRun.durationMs} ms)` : ""}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MaintainerSettingsPage
+// ---------------------------------------------------------------------------
 
 export default function MaintainerSettingsPage() {
   const [replayBody, setReplayBody] = useState(`{
@@ -110,7 +283,7 @@ export default function MaintainerSettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
       <div className="mb-8">
         <h1 className="text-3xl font-bold">Maintainer settings</h1>
         <p className="mt-2 text-muted-foreground">
@@ -136,6 +309,14 @@ export default function MaintainerSettingsPage() {
         ) : networkQuery.data ? (
           <NetworkStatusPanel config={networkQuery.data} />
         ) : null}
+      </div>
+
+      <div className="mb-8">
+        <ContractSyncPanel />
+      </div>
+
+      <div className="mb-8">
+        <DlqPanel />
       </div>
 
       <div className="mb-8">
@@ -302,6 +483,6 @@ export default function MaintainerSettingsPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

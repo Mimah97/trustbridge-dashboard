@@ -12,6 +12,15 @@ const REQUIRED_PATHS = [
   "/api/check",
   "/api/contributors",
   "/api/stats",
+  "/api/metrics",
+  "/api/metrics/prometheus",
+  "/api/disputes",
+  "/api/contributors/queue/health",
+  "/api/contributors/queue/status",
+  "/api/contributors/queue/progress",
+  "/api/contributors/queue/jobs/{jobId}",
+  "/api/contributors/queue/dlq",
+  "/api/contributors/queue/dlq/{jobId}/retry",
   "/api/actions/lookup",
   "/api/webhooks/trustbridge-action",
 ];
@@ -186,6 +195,75 @@ describe("OpenAPI Spec Generation", () => {
       for (const path of REQUIRED_PATHS) {
         expect(spec.paths[path]).toBeDefined();
       }
+    });
+
+    it("documents metrics access controls and Prometheus response format", () => {
+      const spec = generateOpenAPISpec();
+      const metrics = spec.paths["/api/metrics"].get as any;
+      const prometheus = spec.paths["/api/metrics/prometheus"].get as any;
+
+      expect(metrics.security).toEqual([{ bearerAuth: [] }]);
+      expect(metrics.responses["200"].content["application/json"].schema.$ref).toBe(
+        "#/components/schemas/AdminMetrics"
+      );
+      expect(metrics.responses["403"]).toBeDefined();
+
+      expect(prometheus.security).toEqual([{ bearerAuth: [] }]);
+      expect(prometheus.description).toContain("operator session");
+      expect(prometheus.responses["200"].content["text/plain"].schema.type).toBe(
+        "string"
+      );
+      expect(prometheus.responses["403"]).toBeDefined();
+    });
+
+    it("documents dispute methods, filters, request validation, and maintainer-only resolution", () => {
+      const spec = generateOpenAPISpec();
+      const disputes = spec.paths["/api/disputes"] as any;
+
+      expect(disputes.get.parameters.map((parameter: any) => parameter.name)).toEqual([
+        "registrationId",
+        "status",
+        "cursor",
+        "limit",
+      ]);
+      expect(disputes.get.responses["401"]).toBeDefined();
+      expect(disputes.post.requestBody.content["application/json"].schema.$ref).toBe(
+        "#/components/schemas/CreateDisputeRequest"
+      );
+      expect(disputes.post.responses["201"]).toBeDefined();
+      expect(disputes.post.responses["409"]).toBeDefined();
+      expect(disputes.patch.description).toContain("Maintainer-only");
+      expect(disputes.patch.requestBody.content["application/json"].schema.$ref).toBe(
+        "#/components/schemas/UpdateDisputeRequest"
+      );
+      expect(disputes.patch.responses["403"]).toBeDefined();
+    });
+
+    it("documents queue operations, job ownership, and streaming progress", () => {
+      const spec = generateOpenAPISpec();
+      const progress = spec.paths["/api/contributors/queue/progress"].get as any;
+      const job = spec.paths["/api/contributors/queue/jobs/{jobId}"].get as any;
+      const retry = spec.paths[
+        "/api/contributors/queue/dlq/{jobId}/retry"
+      ].post as any;
+
+      expect(progress.parameters[0]).toMatchObject({
+        name: "jobId",
+        in: "query",
+        required: true,
+      });
+      expect(progress.responses["200"].content["text/event-stream"]).toBeDefined();
+      expect(job.parameters[0]).toMatchObject({
+        name: "jobId",
+        in: "path",
+        required: true,
+      });
+      expect(job.description).toContain("their own jobs");
+      expect(spec.paths["/api/contributors/queue/status"].get).toBeDefined();
+      expect(spec.paths["/api/contributors/queue/health"].get).toBeDefined();
+      expect(spec.paths["/api/contributors/queue/dlq"].get).toBeDefined();
+      expect(retry.responses["403"]).toBeDefined();
+      expect(retry.responses["404"]).toBeDefined();
     });
 
     it("every documented path has at least one operation", () => {

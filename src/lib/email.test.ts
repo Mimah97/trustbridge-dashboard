@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   sendEmailNotification,
+  buildInviteEmail,
+  buildBanEmail,
   buildNotReadyEmailBody,
   buildTreasuryExportEmailBody,
 } from "@/lib/email";
@@ -32,6 +34,67 @@ function mockFetchSequence(
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+describe("localized invite and ban email templates", () => {
+  it.each([
+    ["en", "Your TrustBridge invitation", "contributor account has been suspended"],
+    ["es", "Tu invitación a TrustBridge", "suspendido tu cuenta de colaborador"],
+    ["pt", "Seu convite para o TrustBridge", "suspendeu sua conta de contribuidor"],
+  ])("renders invite and ban notices in %s", (locale, inviteText, banText) => {
+    const invite = buildInviteEmail({
+      inviteCode: "safe-code",
+      recipientName: "Contributor",
+      locale,
+    });
+    const ban = buildBanEmail({
+      githubUsername: "contributor",
+      reason: "Repeated abuse",
+      locale,
+    });
+
+    expect(invite.subject).toBeTruthy();
+    expect(invite.body).toContain(inviteText);
+    expect(invite.body).toContain("safe-code");
+    expect(ban.subject).toBeTruthy();
+    expect(ban.body).toContain(banText);
+    expect(ban.body).toContain("Repeated abuse");
+  });
+
+  it("falls back to English for unsupported locales and escapes interpolated HTML", () => {
+    const invite = buildInviteEmail({
+      inviteCode: "<script>alert(1)</script>",
+      recipientName: "<Contributor>",
+      locale: "fr",
+    });
+    const ban = buildBanEmail({
+      githubUsername: "<Contributor>",
+      reason: "Misuse & abuse",
+      locale: "fr",
+    });
+
+    expect(invite.subject).toBe("You're invited to TrustBridge");
+    expect(invite.body).toContain("&lt;Contributor&gt;");
+    expect(invite.body).toContain("&lt;script&gt;");
+    expect(invite.body).not.toContain("<script>");
+    expect(ban.subject).toBe("TrustBridge account access notice");
+    expect(ban.body).toContain("&lt;Contributor&gt;");
+    expect(ban.body).toContain("Misuse &amp; abuse");
+  });
+
+  it("falls back to English for non-string locale input", () => {
+    const invite = buildInviteEmail({ inviteCode: "safe-code", locale: 7 as never });
+    expect(invite.subject).toBe("You're invited to TrustBridge");
+  });
+
+  it("rejects missing invite codes and ban details", () => {
+    expect(() => buildInviteEmail({ inviteCode: " " })).toThrow(
+      "Invite code is required"
+    );
+    expect(() =>
+      buildBanEmail({ githubUsername: "user", reason: " " })
+    ).toThrow("Ban reason is required");
+  });
+});
+
 describe("Email service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -314,6 +377,34 @@ describe("Email service", () => {
       const key1 = (globalThis.fetch as any).mock.calls[0][1].headers["Idempotency-Key"];
       const key2 = (globalThis.fetch as any).mock.calls[1][1].headers["Idempotency-Key"];
       expect(key1).toBe(key2);
+    });
+
+    it("uses a distinct idempotency key for each invite scope", async () => {
+      globalThis.fetch = mockFetchSequence([
+        { ok: true, status: 200, statusText: "OK" },
+        { ok: true, status: 200, statusText: "OK" },
+      ]);
+
+      await sendEmailNotification({
+        to: "guest@example.com",
+        subject: "Invitation",
+        body: "Invite one",
+        idempotencyScope: "invite-1",
+      });
+      await sendEmailNotification({
+        to: "guest@example.com",
+        subject: "Invitation",
+        body: "Invite two",
+        idempotencyScope: "invite-2",
+      });
+
+      const firstKey = (globalThis.fetch as any).mock.calls[0][1].headers[
+        "Idempotency-Key"
+      ];
+      const secondKey = (globalThis.fetch as any).mock.calls[1][1].headers[
+        "Idempotency-Key"
+      ];
+      expect(firstKey).not.toBe(secondKey);
     });
 
     it("respects EMAIL_MAX_ATTEMPTS cap at 5", { timeout: 15000 }, async () => {

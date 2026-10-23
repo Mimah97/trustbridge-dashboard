@@ -40,6 +40,13 @@
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
+    /*
+     * Primary control tokens (buttons, links, inputs) audited by
+     * src/lib/dark-mode-contrast-audit.test.ts for WCAG AA 4.5:1 on the
+     * dashboard, settings, and register routes. `--primary` at L 66% against
+     * `--primary-foreground` at L 11.2% clears ~7:1; keep both in sync when
+     * adjusting either side.
+     */
     --primary: 252 79% 66%;
     --primary-foreground: 222.2 47.4% 11.2%;
     --secondary: 217.2 32.6% 17.5%;
