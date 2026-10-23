@@ -485,5 +485,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Handsoff notes
 
+<!-- handsoff-issue-590 -->
+- #590: Implement profile wallet verification status badges with tests
 <!-- handsoff-issue-532 -->
 - #532: Add RBAC tests for maintainer vs contributor on /api/disputes

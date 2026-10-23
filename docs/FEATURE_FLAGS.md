@@ -59,6 +59,45 @@ freeze windows (`FEATURE_FLAG_*`, `FEATURE_FLAGS_DB_ENABLED`,
 `FEATURE_FLAGS_CACHE_TTL_MS`, `MAINTENANCE`) are documented in
 [ENVIRONMENT.md](./ENVIRONMENT.md#feature-flags-and-freeze-windows).
 
+### Freeze interactions with the registration UI
+
+Registration is gated by the same flags, so a freeze must be **visible** in the
+UI rather than surfacing as a dead end. The registration page
+(`src/app/register/`) resolves the freeze state server-side and renders a
+read-only notice instead of the form when registration is frozen; the operator
+panel at `/dashboard/settings` shows the same state so maintainers can confirm
+why sign-ups are closed.
+
+| Flag | Freeze effect when off | Registration UI |
+|---|---|---|
+| `invite_generation` | `POST /api/invites/generate` returns `403` | `/register` shows the freeze notice; the invite form is hidden and no submit is attempted |
+| `maintenance_mode` | App is read-only (composes with `MAINTENANCE`) | `/register` shows the freeze notice; the form is disabled |
+
+When registration is frozen the page renders a stable, actionable message
+(`Registration is currently paused during a freeze window. Please try again
+later.`) instead of the form, and the API still returns `403` for any direct
+`POST` — the UI copy and the API guard stay consistent.
+
+Example — open a registration freeze with an env override:
+
+```bash
+FEATURE_FLAG_INVITE_GENERATION=off \
+FEATURE_FLAG_MAINTENANCE_MODE=on \
+  npm run start
+```
+
+Example — open the same freeze with a database row:
+
+```sql
+INSERT INTO "FeatureFlag" ("key", "enabled", "updatedAt")
+VALUES ('invite_generation', false, now())
+ON CONFLICT ("key") DO UPDATE SET "enabled" = excluded."enabled", "updatedAt" = now();
+```
+
+Because `invite_generation` and `maintenance_mode` are `risky`, a DB outage
+during the freeze keeps registration **closed** (fail closed) — the UI notice
+stays up and the API keeps returning `403`.
+
 ### Freeze-window env vars
 
 The `freeze_window` flag gates the helpers in `src/lib/freeze-window.ts`. When
@@ -104,9 +143,9 @@ FEATURE_FLAG_FREEZE_WINDOW=off
 | Key | Default | Risky | Gates | Documented at |
 |---|---|---|---|---|
 | `batch_recheck` | `true` | ✅ | `POST /api/contributors` — full batch recheck (one Horizon call per contributor) | `src/app/api/contributors/route.ts` |
-| `invite_generation` | `true` | ✅ | `POST /api/invites/generate` — bulk invite code creation | `src/app/api/invites/generate/route.ts` |
+| `invite_generation` | `true` | ✅ | `POST /api/invites/generate` — bulk invite code creation; also gates the `/register` form | `src/app/api/invites/generate/route.ts`, `src/app/register/` |
 | `dlq_retry` | `true` | ✅ | Retry a failed job or Soroban outbox item via `POST /api/contributors/queue/dlq/[jobId]/retry` or `POST /api/soroban/outbox/dlq/[id]/replay` | `src/app/api/contributors/queue/dlq/[jobId]/retry/route.ts`, `src/app/api/soroban/outbox/dlq/[id]/replay/route.ts` |
-| `maintenance_mode` | `false` | ✅ | Composes with the `MAINTENANCE` env var (see [DEPLOYMENT.md](./DEPLOYMENT.md#maintenance-mode)) | `src/lib/maintenance.ts` |
+| `maintenance_mode` | `false` | ✅ | Composes with the `MAINTENANCE` env var (see [DEPLOYMENT.md](./DEPLOYMENT.md#maintenance-mode)); disables the `/register` form | `src/lib/maintenance.ts`, `src/app/register/` |
 | `otel_traces` | `false` | — | Opt-in tracing; composes with `OTEL_TRACES_ENABLED` (see [ENVIRONMENT.md](./ENVIRONMENT.md#opentelemetry-tracing-issue-203)) | `src/lib/tracing.ts` |
 | `freeze_window` | `true` | ✅ | Enforces wave freeze-window blocking on mutating APIs. When OFF, freeze-window helpers never block requests regardless of `FREEZE_WINDOW_*` env vars. | `src/lib/freeze-window.ts` |
 
@@ -153,6 +192,11 @@ The admin-only read-only panel at `/dashboard/settings` lists every flag’s key
 resolved value and source (`env`, `db`, `default` or `fail-closed`). It is gated
 by the admin RBAC role; non-admin users are redirected to `/dashboard`. The panel is
 read-only — to change a flag, use an env override or the database source.
+
+When a freeze is active, the panel shows `invite_generation` and
+`maintenance_mode` as disabled with their source, so operators can confirm why
+`/register` is showing the freeze notice and why invite/export actions are
+rejected with `403`.
 
 ---
 
