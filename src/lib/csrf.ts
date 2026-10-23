@@ -194,3 +194,43 @@ export function validateCsrfToken(userId: string, token: string): boolean {
     return false;
   }
 }
+
+/**
+ * Enforces CSRF protection for mutating requests using the signed,
+ * user-bound token issued by {@link generateCsrfToken}.
+ *
+ * Unlike {@link assertCsrf} (double-submit cookie), this variant binds the
+ * token to the authenticated user so a token minted for one user cannot be
+ * replayed by another. Used by sensitive mutating endpoints such as the
+ * address-history export.
+ *
+ * Token source:
+ * - Header: `x-csrf-token`
+ *
+ * Safe methods (GET, HEAD, OPTIONS) bypass entirely.
+ *
+ * Returns a 403 NextResponse when rejected, or null when allowed.
+ */
+export function assertSignedCsrf(
+  request: NextRequest,
+  userId: string
+): NextResponse | null {
+  if (SAFE_METHODS.has(request.method)) {
+    return null;
+  }
+
+  const originError = assertSameOrigin(request);
+  if (originError) {
+    return originError;
+  }
+
+  const headerToken = request.headers.get("x-csrf-token");
+  if (!headerToken || !userId || !validateCsrfToken(userId, headerToken)) {
+    return NextResponse.json(
+      { error: "Invalid CSRF token" },
+      { status: 403 }
+    );
+  }
+
+  return null;
+}
