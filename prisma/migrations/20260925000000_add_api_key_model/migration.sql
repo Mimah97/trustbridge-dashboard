@@ -26,6 +26,10 @@ CREATE INDEX "ApiKey_createdById_idx" ON "ApiKey"("createdById");
 -- Index used by audit / admin list queries ordered by creation time.
 CREATE INDEX "ApiKey_createdAt_idx" ON "ApiKey"("createdAt");
 
+-- Index used by stale-key audits / ops dashboards that sort by last usage.
+-- NULLs (never-used keys) sort last under DESC, which is the desired order.
+CREATE INDEX "ApiKey_lastUsedAt_idx" ON "ApiKey"("lastUsedAt");
+
 -- Foreign key: cascade-delete API keys when their creator is removed.
 ALTER TABLE "ApiKey" ADD CONSTRAINT "ApiKey_createdById_fkey"
     FOREIGN KEY ("createdById") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
