@@ -573,6 +573,124 @@ export function generateOpenAPISpec(
           },
         },
       },
+      "/api/badge": {
+        get: {
+          operationId: "getBadge",
+          summary: "Get readiness badge for a Stellar address",
+          tags: ["Badge"],
+          parameters: [
+            {
+              name: "address",
+              in: "query",
+              required: true,
+              schema: { type: "string" },
+              description: "Stellar public key (G-address)",
+            },
+            {
+              name: "format",
+              in: "query",
+              schema: {
+                type: "string",
+                enum: ["json", "svg"],
+                default: "json",
+              },
+              description: "Response format for the badge",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Badge payload (JSON) or rendered SVG badge",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/Badge",
+                  },
+                },
+                "image/svg+xml": {
+                  schema: { type: "string" },
+                },
+              },
+            },
+            "400": {
+              description: "Invalid or missing address parameter",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+            "404": {
+              description: "No badge available for address",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+            "429": {
+              description: "Rate limit exceeded",
+            },
+          },
+        },
+      },
+      "/api/address-history": {
+        get: {
+          operationId: "getAddressHistory",
+          summary: "Get readiness history for a Stellar address",
+          tags: ["Address History"],
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "address",
+              in: "query",
+              required: true,
+              schema: { type: "string" },
+              description: "Stellar public key (G-address)",
+            },
+            {
+              name: "cursor",
+              in: "query",
+              schema: { type: "string" },
+              description: "Pagination cursor (base64-encoded ID)",
+            },
+            {
+              name: "limit",
+              in: "query",
+              schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+              description: "Number of history entries per page",
+            },
+          ],
+          responses: {
+            "200": {
+              description: "Address history entries",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/AddressHistoryList",
+                  },
+                },
+              },
+            },
+            "400": {
+              description: "Invalid or missing address parameter",
+              content: {
+                "application/json": {
+                  schema: {
+                    $ref: "#/components/schemas/ErrorResponse",
+                  },
+                },
+              },
+            },
+            "401": {
+              description: "Not authenticated",
+            },
+          },
+        },
+      },
       "/api/webhooks/trustbridge-action": {
         post: {
           operationId: "trustbridgeActionWebhook",
@@ -589,140 +707,29 @@ export function generateOpenAPISpec(
             },
           },
           responses: {
-            "202": {
-              description: "Webhook accepted for processing",
+            "200": {
+              description: "Webhook accepted",
             },
             "400": {
-              description: "Unsupported schema version or event type",
+              description: "Invalid webhook payload",
             },
             "401": {
-              description: "Invalid signature or unauthorized request",
-            },
-          },
-        },
-      },
-      "/api/maintainer/ban": {
-        post: {
-          operationId: "manageContributorBan",
-          summary: "Ban or unban a contributor by GitHub username",
-          tags: ["Maintainer"],
-          security: [{ bearerAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: {
-                  $ref: "#/components/schemas/BanRequest",
-                },
-              },
-            },
-          },
-          responses: {
-            "200": {
-              description: "Contributor ban status updated successfully",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/BanResponse",
-                  },
-                },
-              },
-            },
-            "400": {
-              description: "Invalid request (missing githubUsername, invalid action, or missing reason for ban)",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "403": {
-              description: "Forbidden. Maintainer access required.",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "500": {
-              description: "Internal server error executing ban action",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      "/api/registrations/{id}/restore": {
-        post: {
-          operationId: "restoreRegistration",
-          summary: "Restore a soft-deleted contributor registration",
-          tags: ["Registration", "Maintainer"],
-          security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: "id",
-              in: "path",
-              required: true,
-              schema: { type: "string" },
-              description: "ID of the soft-deleted registration to restore",
-            },
-          ],
-          responses: {
-            "200": {
-              description: "Registration restored successfully",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/RestoreRegistrationResponse",
-                  },
-                },
-              },
-            },
-            "403": {
-              description: "Forbidden. Maintainer session required.",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "404": {
-              description: "Deleted registration not found",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
-            },
-            "409": {
-              description: "Conflict. Stellar address is already actively registered.",
-              content: {
-                "application/json": {
-                  schema: {
-                    $ref: "#/components/schemas/ErrorResponse",
-                  },
-                },
-              },
+              description: "Invalid webhook signature",
             },
           },
         },
       },
     },
     components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+        },
+      },
       schemas: {
+
         BanRequest: {
           type: "object",
           required: ["githubUsername"],
@@ -1085,50 +1092,55 @@ export function generateOpenAPISpec(
             },
           },
         },
-      },
-      securitySchemes: {
-        bearerAuth: {
-          type: "http",
-          scheme: "bearer",
-          bearerFormat: "JWT",
+
+        ErrorResponse: {
+          type: "object",
+          required: ["error"],
+          properties: {
+            error: { type: "string" },
+            message: { type: "string" },
+          },
+        },
+        Badge: {
+          type: "object",
+          required: ["address", "status"],
+          properties: {
+            address: { type: "string" },
+            status: {
+              type: "string",
+              enum: ["ready", "pending", "blocked", "unknown"],
+            },
+            label: { type: "string" },
+            message: { type: "string" },
+            updatedAt: { type: "string", format: "date-time" },
+          },
+        },
+        AddressHistoryEntry: {
+          type: "object",
+          required: ["id", "address", "status", "createdAt"],
+          properties: {
+            id: { type: "string" },
+            address: { type: "string" },
+            status: {
+              type: "string",
+              enum: ["ready", "pending", "blocked", "unknown"],
+            },
+            reason: { type: "string" },
+            createdAt: { type: "string", format: "date-time" },
+          },
+        },
+        AddressHistoryList: {
+          type: "object",
+          required: ["entries"],
+          properties: {
+            entries: {
+              type: "array",
+              items: { $ref: "#/components/schemas/AddressHistoryEntry" },
+            },
+            nextCursor: { type: "string", nullable: true },
+          },
         },
       },
     },
-  };
-}
-
-/**
- * Validates the generated OpenAPI spec
- */
-export function validateOpenAPISpec(spec: OpenAPISpec): {
-  valid: boolean;
-  errors: string[];
-} {
-  const errors: string[] = [];
-
-  // Check required top-level fields
-  if (!spec.openapi) errors.push("Missing openapi version");
-  if (!spec.info) errors.push("Missing info object");
-  if (!spec.paths) errors.push("Missing paths object");
-
-  // Check info object
-  if (spec.info) {
-    if (!spec.info.title) errors.push("Missing info.title");
-    if (!spec.info.version) errors.push("Missing info.version");
-  }
-
-  // Check servers
-  if (!spec.servers || spec.servers.length === 0) {
-    errors.push("No servers defined");
-  }
-
-  // Check paths
-  if (spec.paths && Object.keys(spec.paths).length === 0) {
-    errors.push("No API paths defined");
-  }
-
-  return {
-    valid: errors.length === 0,
-    errors,
   };
 }
