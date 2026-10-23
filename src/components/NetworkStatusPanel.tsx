@@ -374,7 +374,7 @@ export function NetworkStatusPanel({
   );
   const [submitting, setSubmitting] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
-const [healthState, setHealthState] = useState<HealthState>({
+  const [healthState, setHealthState] = useState<HealthState>({
     kind: "loading",
   });
 
