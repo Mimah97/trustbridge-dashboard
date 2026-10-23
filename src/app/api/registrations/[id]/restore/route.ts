@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireMaintainerSession } from "@/lib/api-auth";
 import { assertSameOrigin } from "@/lib/csrf";
+import { invalidateContributorListCaches } from "@/lib/cache-tags";
 import { recordAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 
@@ -44,6 +45,8 @@ export async function POST(
       targetLabel: restored.stellarAddress,
       metadata: { restoredAt: new Date().toISOString() },
     });
+
+    await invalidateContributorListCaches();
 
     return NextResponse.json({ success: true, registration: restored });
   } catch (error) {

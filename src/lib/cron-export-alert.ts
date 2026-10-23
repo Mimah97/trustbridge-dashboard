@@ -24,6 +24,27 @@ export interface CronExportAlertPayload {
 }
 
 /**
+ * Redact PII and secrets from alert text before it leaves the process.
+ *
+ * Masks:
+ *   - Stellar G-addresses (`G` + 55 base32 chars) → `G...<last4>`
+ *   - API-key-style secrets (`tb_…`, `sk-…`/`sk_…`, Slack `xox…` tokens)
+ *     → `[redacted-secret]`
+ *   - `Bearer <token>` credential values → `Bearer [redacted]`
+ *
+ * Pure function — safe to unit test and reuse in other alert paths.
+ */
+export function redactAlertText(value: string): string {
+  return value
+    .replace(/\bG[A-Z2-7]{55}\b/g, (address) => `${address.slice(0, 5)}...${address.slice(-4)}`)
+    .replace(
+      /\b(tb_[A-Za-z0-9_-]{8,}|sk[-_][A-Za-z0-9_-]{8,}|xox[bap]-[A-Za-z0-9-]+)\b/g,
+      "[redacted-secret]"
+    )
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*\b/g, "Bearer [redacted]");
+}
+
+/**
  * Fire an outbound failure-alert webhook when the cron export fails.
  *
  * Destination: `CRON_EXPORT_ALERT_WEBHOOK_URL` env var.
@@ -41,7 +62,7 @@ export async function sendCronExportAlert(
   const webhookUrl = process.env.CRON_EXPORT_ALERT_WEBHOOK_URL?.trim();
   if (!webhookUrl) return;
 
-  const error = result.error ?? "Unknown export failure";
+  const error = redactAlertText(result.error ?? "Unknown export failure");
   const environment = process.env.NODE_ENV ?? "unknown";
 
   const payload: CronExportAlertPayload = {

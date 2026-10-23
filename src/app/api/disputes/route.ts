@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { authOptions } from "@/lib/auth";
 import { assertSameOrigin } from "@/lib/csrf";
+import { invalidateContributorListCaches } from "@/lib/cache-tags";
 import { prisma } from "@/lib/prisma";
 import {
   trackServerDisputeClosed,
@@ -191,6 +192,8 @@ export async function PATCH(request: NextRequest) {
       status: updated.status,
     });
   }
+
+  await invalidateContributorListCaches();
 
   return NextResponse.json({ dispute: updated });
 }
