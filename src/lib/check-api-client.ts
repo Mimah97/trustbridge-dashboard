@@ -222,3 +222,29 @@ export async function checkAddressViaApi(
 
   return outcome;
 }
+
+/**
+ * Human-readable, actionable message for a `CheckOutcome`. UI code should
+ * render this instead of re-deriving copy per outcome kind, so degraded
+ * states (circuit open, timeout, network failure) stay consistent.
+ */
+export function describeCheckOutcome(outcome: CheckOutcome): string {
+  switch (outcome.kind) {
+    case "ok":
+      return "Check completed.";
+    case "rate_limited":
+      return outcome.retryAfterSeconds !== null
+        ? `Too many requests. Please retry in ${outcome.retryAfterSeconds}s.`
+        : "Too many requests. Please try again shortly.";
+    case "circuit_open":
+      return "Stellar services are temporarily unavailable. Please try again in a moment.";
+    case "timeout":
+      return "The check timed out. Please try again.";
+    case "network_error":
+      return "Network error while checking the address. Please check your connection and retry.";
+    case "error":
+      return outcome.errors[0] ?? "Failed to check address.";
+    default:
+      return "Failed to check address.";
+  }
+}

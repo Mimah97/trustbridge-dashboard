@@ -1,8 +1,24 @@
 import { NextResponse } from "next/server";
 
 import type { HorizonCheckResult, ReadinessStatus } from "@/types";
+import {
+  CircuitBreaker,
+  CircuitOpenError,
+  type CircuitBreakerOptions,
+} from "@/lib/circuit-breaker";
 
 export const IDEMPOTENCY_KEY_HEADER = "idempotency-key";
+
+export const HORIZON_BREAKER_NAME = "horizon";
+export const SOROBAN_BREAKER_NAME = "soroban";
+
+/**
+ * Shared circuit breakers guarding outbound Stellar calls. A single breaker
+ * per upstream keeps state consistent across requests so a Horizon or Soroban
+ * outage trips once and short-circuits subsequent calls instead of cascading.
+ */
+export const horizonBreaker = new CircuitBreaker(HORIZON_BREAKER_NAME);
+export const sorobanBreaker = new CircuitBreaker(SOROBAN_BREAKER_NAME);
 
 export function emptyCheckResult(
   readiness: ReadinessStatus = "not_ready",
@@ -19,6 +35,52 @@ export function emptyCheckResult(
     errors,
     readiness,
   };
+}
+
+/**
+ * Run an outbound Horizon call through the shared breaker. When the breaker is
+ * open (or the upstream fails) a stable, actionable error is surfaced instead
+ * of letting the failure cascade through the dashboard.
+ */
+export async function withHorizonBreaker<T>(
+  fn: () => Promise<T>,
+  options?: CircuitBreakerOptions,
+): Promise<T> {
+  return horizonBreaker.execute(fn, options);
+}
+
+/**
+ * Run an outbound Soroban call through the shared breaker. Mirrors
+ * {@link withHorizonBreaker} so both upstreams degrade identically.
+ */
+export async function withSorobanBreaker<T>(
+  fn: () => Promise<T>,
+  options?: CircuitBreakerOptions,
+): Promise<T> {
+  return sorobanBreaker.execute(fn, options);
+}
+
+/**
+ * Map a breaker/upstream failure to a stable, user-facing message. Open
+ * breakers report a degraded state so the UI can show a retry hint rather than
+ * a generic 500.
+ */
+export function describeBreakerError(error: unknown): {
+  message: string;
+  degraded: boolean;
+} {
+  if (error instanceof CircuitOpenError) {
+    return {
+      message:
+        "Stellar network is temporarily unavailable. Please retry shortly.",
+      degraded: true,
+    };
+  }
+  const message =
+    error instanceof Error && error.message.length > 0
+      ? error.message
+      : "Stellar network request failed.";
+  return { message, degraded: false };
 }
 
 /**
