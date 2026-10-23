@@ -8,6 +8,8 @@
  * The API route at `src/app/api/health/route.ts` also calls `runHealthChecks`
  * so both paths stay in sync. (#403)
  *
+ * Dependency probes distinguish DB vs queue vs RPC failures with structured
+ * statuses so incident response can tell which backend is degraded. (#589)
  * `NetworkStatusPanel` consumes the same `HealthResponse` shape from
  * `/api/health`; `parseHealthResponse` below validates partial/malformed
  * payloads so the panel can render a degraded/unavailable state instead of
@@ -22,11 +24,23 @@ import { captureException } from "@/lib/sentry";
 
 export type HealthStatus = "ok" | "degraded" | "error";
 
+/**
+ * Structured result of a single dependency probe. `kind` identifies which
+ * backend failed (db, queue, rpc) so operators can triage without parsing
+ * free-form error strings.
+ */
+export interface DependencyProbe {
+  status: HealthStatus;
+  latencyMs: number;
+  error?: string;
+}
+
 export interface HealthResponse {
   status: HealthStatus;
   timestamp: string;
   checks: {
-    database: { status: HealthStatus; latencyMs: number; error?: string };
+    database: DependencyProbe;
+    queue: DependencyProbe;
     horizon: { status: HealthStatus; latencyMs: number };
     sorobanRpc: { status: HealthStatus; latencyMs: number };
     csvStaleness: {
@@ -173,6 +187,66 @@ async function probeSorobanRpc(): Promise<{ ok: boolean; latencyMs: number }> {
 }
 
 /**
+ * Probe the Prisma database with a lightweight `SELECT 1`.
+ * Returns a structured probe so DB failures are distinguishable from
+ * queue/RPC failures in the health payload. (#589)
+ */
+async function probeDatabase(): Promise<DependencyProbe> {
+  const start = Date.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return { status: "ok", latencyMs: Date.now() - start };
+  } catch (err) {
+    captureException(err, { surface: "health", check: "database" });
+    return {
+      status: "error",
+      latencyMs: Date.now() - start,
+      error: err instanceof Error ? err.message : "Unknown database error",
+    };
+  }
+}
+
+/**
+ * Probe the queue backend. The queue is considered healthy when its backing
+ * store is reachable; a missing/unreachable queue degrades (not errors) the
+ * overall status so a queue outage does not mask a healthy DB. (#589)
+ */
+async function probeQueue(): Promise<DependencyProbe> {
+  const start = Date.now();
+  const queueUrl = process.env.QUEUE_HEALTH_URL?.trim();
+  if (!queueUrl) {
+    // No queue backend configured — treat as healthy no-op.
+    return { status: "ok", latencyMs: 0 };
+  }
+  try {
+    const res = await fetch(queueUrl, {
+      signal: AbortSignal.timeout(5_000),
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      captureException(new Error("Queue health probe failed"), {
+        surface: "health",
+        check: "queue",
+        statusCode: res.status,
+      });
+      return {
+        status: "degraded",
+        latencyMs: Date.now() - start,
+        error: `Queue backend returned ${res.status}`,
+      };
+    }
+    return { status: "ok", latencyMs: Date.now() - start };
+  } catch (err) {
+    captureException(err, { surface: "health", check: "queue" });
+    return {
+      status: "degraded",
+      latencyMs: Date.now() - start,
+      error: err instanceof Error ? err.message : "Unknown queue error",
+    };
+  }
+}
+
+/**
  * Run all health checks and return a typed HealthResponse.
  * Called server-side by both the API route and the status page.
  */
@@ -180,25 +254,14 @@ export async function runHealthChecks(): Promise<HealthResponse> {
   const timestamp = new Date().toISOString();
   const version = process.env.npm_package_version ?? "0.1.0";
 
-  const [horizonProbe, rpcProbe] = await Promise.all([
+  const [horizonProbe, rpcProbe, dbProbe, queueProbe] = await Promise.all([
     probeHorizon(),
     probeSorobanRpc(),
+    probeDatabase(),
+    probeQueue(),
   ]);
 
-  // Database check
-  let dbStatus: HealthStatus = "ok";
-  let dbLatencyMs = 0;
-  let dbError: string | undefined;
-  const dbStart = Date.now();
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    dbLatencyMs = Date.now() - dbStart;
-  } catch (err) {
-    dbLatencyMs = Date.now() - dbStart;
-    dbStatus = "error";
-    dbError = err instanceof Error ? err.message : "Unknown database error";
-    captureException(err, { surface: "health", check: "database" });
-  }
+  const dbStatus: HealthStatus = dbProbe.status;
 
   if (!horizonProbe.ok) {
     captureException(new Error("Horizon health probe failed"), {
@@ -256,7 +319,8 @@ export async function runHealthChecks(): Promise<HealthResponse> {
     csvStatus === "degraded" ||
     contractSyncStatus === "degraded" ||
     horizonStatus === "degraded" ||
-    rpcStatus === "degraded"
+    rpcStatus === "degraded" ||
+    queueProbe.status === "degraded"
   ) {
     overallStatus = "degraded";
   }
@@ -265,11 +329,8 @@ export async function runHealthChecks(): Promise<HealthResponse> {
     status: overallStatus,
     timestamp,
     checks: {
-      database: {
-        status: dbStatus,
-        latencyMs: dbLatencyMs,
-        ...(dbError ? { error: dbError } : {}),
-      },
+      database: dbProbe,
+      queue: queueProbe,
       horizon: { status: horizonStatus, latencyMs: horizonProbe.latencyMs },
       sorobanRpc: { status: rpcStatus, latencyMs: rpcProbe.latencyMs },
       csvStaleness: { status: csvStatus, ...csvSummary },
