@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireMaintainerSession } from "@/lib/api-auth";
 import { assertSameOrigin } from "@/lib/csrf";
+import { invalidateContributorListCaches } from "@/lib/cache-tags";
 import { banContributor, unbanContributor } from "@/lib/ban-service";
 
 export const runtime = "nodejs";
@@ -25,11 +26,13 @@ export async function POST(request: NextRequest) {
       action?: "ban" | "unban";
       githubUsername?: string;
       reason?: string;
+      locale?: string;
     };
 
     const action = body.action ?? "ban";
     const githubUsername = body.githubUsername?.trim();
     const reason = body.reason?.trim();
+    const locale = typeof body.locale === "string" ? body.locale : undefined;
 
     if (!githubUsername) {
       return NextResponse.json({ error: "githubUsername is required." }, { status: 400 });
@@ -45,7 +48,10 @@ export async function POST(request: NextRequest) {
         reason,
         actorId: session.user.id,
         actorLogin: session.user.githubUsername ?? null,
+        locale,
       });
+
+      await invalidateContributorListCaches();
 
       return NextResponse.json({
         success: true,
@@ -59,6 +65,8 @@ export async function POST(request: NextRequest) {
         actorLogin: session.user.githubUsername ?? null,
         reason,
       });
+
+      await invalidateContributorListCaches();
 
       return NextResponse.json({
         success: true,

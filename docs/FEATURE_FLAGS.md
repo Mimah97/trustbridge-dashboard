@@ -50,7 +50,7 @@ override or DB row); to close it, flip them back on.
 |---|---|
 | `batch_recheck` | `POST /api/contributors` returns `403` — no per-contributor Horizon fan-out |
 | `invite_generation` | `POST /api/invites/generate` returns `403` — invite issuance frozen |
-| `dlq_retry` | `POST /api/contributors/queue/dlq/[jobId]/retry` returns `403` — failed jobs stay parked |
+| `dlq_retry` | Contributor and Soroban outbox replay endpoints return `403` — failed items stay parked |
 | `maintenance_mode` | Composes with the `MAINTENANCE` env var to take the app read-only |
 
 Because these flags are `risky`, a DB outage during a freeze keeps them **off**
@@ -98,6 +98,44 @@ Because `invite_generation` and `maintenance_mode` are `risky`, a DB outage
 during the freeze keeps registration **closed** (fail closed) — the UI notice
 stays up and the API keeps returning `403`.
 
+### Freeze-window env vars
+
+The `freeze_window` flag gates the helpers in `src/lib/freeze-window.ts`. When
+it is **off**, those helpers never block a request regardless of the
+`FREEZE_WINDOW_*` env vars below. When it is **on** (the default), the
+`FREEZE_WINDOW_*` vars decide whether a freeze is currently active. These are
+the same variables documented in
+[ENVIRONMENT.md](./ENVIRONMENT.md#freeze-window-issue-536) — keep both pages in
+sync when changing parsing or defaults.
+
+| Env var | Type | Default | Effect |
+|---|---|---|---|
+| `FREEZE_WINDOW_ENABLED` | boolean | `false` | Master switch. When falsy, no freeze is ever active and the other `FREEZE_WINDOW_*` vars are ignored. |
+| `FREEZE_WINDOW_START` | ISO-8601 timestamp | _(unset)_ | Start of the freeze window. Required for a scheduled freeze; an unparseable value is treated as unset. |
+| `FREEZE_WINDOW_END` | ISO-8601 timestamp | _(unset)_ | End of the freeze window. Required for a scheduled freeze; an unparseable value is treated as unset. |
+| `FREEZE_WINDOW_MESSAGE` | string | _(built-in)_ | Operator-facing message returned with `403` responses while a freeze is active. |
+
+A freeze is active only when `FREEZE_WINDOW_ENABLED` is truthy **and** the
+current time falls within `[FREEZE_WINDOW_START, FREEZE_WINDOW_END)`. If either
+timestamp is missing or invalid, no scheduled freeze is active (fail open on
+misconfiguration, but the `freeze_window` flag still gates the helpers).
+
+Example — schedule a freeze for a Wave:
+
+```dotenv
+FEATURE_FLAG_FREEZE_WINDOW=on
+FREEZE_WINDOW_ENABLED=true
+FREEZE_WINDOW_START=2026-03-01T00:00:00Z
+FREEZE_WINDOW_END=2026-03-08T00:00:00Z
+FREEZE_WINDOW_MESSAGE="Wave 12 freeze in effect — mutating APIs are paused."
+```
+
+Example — disable freeze-window blocking entirely:
+
+```dotenv
+FEATURE_FLAG_FREEZE_WINDOW=off
+```
+
 ---
 
 ## The flags
@@ -106,7 +144,7 @@ stays up and the API keeps returning `403`.
 |---|---|---|---|---|
 | `batch_recheck` | `true` | ✅ | `POST /api/contributors` — full batch recheck (one Horizon call per contributor) | `src/app/api/contributors/route.ts` |
 | `invite_generation` | `true` | ✅ | `POST /api/invites/generate` — bulk invite code creation; also gates the `/register` form | `src/app/api/invites/generate/route.ts`, `src/app/register/` |
-| `dlq_retry` | `true` | ✅ | `POST /api/contributors/queue/dlq/[jobId]/retry` — re-queue a failed job | `src/app/api/contributors/queue/dlq/[jobId]/retry/route.ts` |
+| `dlq_retry` | `true` | ✅ | Retry a failed job or Soroban outbox item via `POST /api/contributors/queue/dlq/[jobId]/retry` or `POST /api/soroban/outbox/dlq/[id]/replay` | `src/app/api/contributors/queue/dlq/[jobId]/retry/route.ts`, `src/app/api/soroban/outbox/dlq/[id]/replay/route.ts` |
 | `maintenance_mode` | `false` | ✅ | Composes with the `MAINTENANCE` env var (see [DEPLOYMENT.md](./DEPLOYMENT.md#maintenance-mode)); disables the `/register` form | `src/lib/maintenance.ts`, `src/app/register/` |
 | `otel_traces` | `false` | — | Opt-in tracing; composes with `OTEL_TRACES_ENABLED` (see [ENVIRONMENT.md](./ENVIRONMENT.md#opentelemetry-tracing-issue-203)) | `src/lib/tracing.ts` |
 | `freeze_window` | `true` | ✅ | Enforces wave freeze-window blocking on mutating APIs. When OFF, freeze-window helpers never block requests regardless of `FREEZE_WINDOW_*` env vars. | `src/lib/freeze-window.ts` |

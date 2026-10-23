@@ -12,6 +12,13 @@ declare module "next-auth" {
       image?: string | null;
       githubUsername?: string;
       isMaintainer?: boolean;
+      /**
+       * The maintainer org this user belongs to, as recorded during sign-in.
+       * Sourced from GITHUB_MAINTAINER_ORG at the time of the JWT callback.
+       * Defaults to "default" when the DB or env value is absent so that API
+       * route org-scoping logic can always rely on a non-empty string.
+       */
+      maintainerOrgId?: string;
       role?: AppRole;
       csrfToken?: string;
       /** The org the maintainer is currently scoped to. Defaults to "default". */
@@ -30,6 +37,11 @@ declare module "next-auth/jwt" {
     githubId?: string;
     githubUsername?: string;
     isMaintainer?: boolean;
+    /**
+     * Org identifier stored on the JWT so that session refreshes do not
+     * require a round-trip back to the database or the GitHub API.
+     */
+    maintainerOrgId?: string;
     role?: AppRole;
     /** Active org for this session (set at sign-in, switchable via /api/auth/switch-org). */
     maintainerOrgId?: string;

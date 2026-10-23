@@ -20,8 +20,18 @@ import { useEffect, useState } from "react";
  *   connectivity state rather than a site-wide alert.
  * - `aria-live="polite"` so screen readers announce the banner without
  *   interrupting current reading.
+ * - `forceOffline` lets Storybook/tests render the offline state
+ *   deterministically without depending on the real `navigator.onLine`.
  */
-export function OfflineBanner() {
+export interface OfflineBannerProps {
+  /**
+   * When provided, overrides the live network state. Intended for
+   * Storybook visual QA and tests; production call sites omit it.
+   */
+  forceOffline?: boolean;
+}
+
+export function OfflineBanner({ forceOffline }: OfflineBannerProps = {}) {
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -40,7 +50,9 @@ export function OfflineBanner() {
     };
   }, []);
 
-  if (!isOffline) return null;
+  const offline = forceOffline ?? isOffline;
+
+  if (!offline) return null;
 
   return (
     <div

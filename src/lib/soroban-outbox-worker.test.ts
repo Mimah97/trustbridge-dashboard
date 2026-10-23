@@ -4,6 +4,8 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     sorobanOutbox: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
       update: vi.fn(),
       create: vi.fn(),
     },
@@ -21,7 +23,11 @@ vi.mock("@/lib/audit", () => ({
 import { prisma } from "@/lib/prisma";
 import { mirrorRegistrationToSoroban } from "@/lib/soroban-register";
 import { recordAuditLog } from "@/lib/audit";
-import { processSorobanOutbox } from "./soroban-outbox-worker";
+import {
+  listSorobanOutboxDeadLetters,
+  processSorobanOutbox,
+  replayFailedSorobanOutboxEntry,
+} from "./soroban-outbox-worker";
 import {
   enqueueSorobanOutbox,
   setSorobanOutboxSink,
@@ -33,6 +39,7 @@ import {
 describe("Soroban Outbox Worker (Issue #199)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.sorobanOutbox.updateMany).mockResolvedValue({ count: 1 });
     setSorobanOutboxSink(null);
     clearSorobanOutbox();
   });
@@ -111,6 +118,76 @@ describe("Soroban Outbox Worker (Issue #199)", () => {
         targetId: "outbox-2",
       })
     );
+  });
+
+  it("lists only failed outbox metadata for the requested maintainer org", async () => {
+    vi.mocked(prisma.sorobanOutbox.findMany).mockResolvedValueOnce([
+      {
+        id: "outbox-failed-1",
+        action: "register",
+        attempts: 5,
+        lastError: "RPC timeout",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ] as any);
+
+    const items = await listSorobanOutboxDeadLetters("org-1", 20);
+
+    expect(prisma.sorobanOutbox.findMany).toHaveBeenCalledWith({
+      where: { maintainerOrgId: "org-1", status: "FAILED" },
+      select: {
+        id: true,
+        action: true,
+        attempts: true,
+        lastError: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 20,
+    });
+    expect(items[0]).not.toHaveProperty("payload");
+  });
+
+  it("atomically resets a failed item for replay within the requested org", async () => {
+    vi.mocked(prisma.sorobanOutbox.findFirst).mockResolvedValueOnce({
+      id: "outbox-failed-1",
+      action: "register",
+      attempts: 5,
+    } as any);
+
+    const item = await replayFailedSorobanOutboxEntry(
+      "outbox-failed-1",
+      "org-1"
+    );
+
+    expect(item).toEqual({
+      id: "outbox-failed-1",
+      action: "register",
+      previousAttempts: 5,
+    });
+    expect(prisma.sorobanOutbox.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "outbox-failed-1",
+        maintainerOrgId: "org-1",
+        status: "FAILED",
+      },
+      data: expect.objectContaining({
+        status: "PENDING",
+        attempts: 0,
+        lastError: null,
+      }),
+    });
+  });
+
+  it("does not replay items that are missing, non-failed, or outside the org", async () => {
+    vi.mocked(prisma.sorobanOutbox.findFirst).mockResolvedValueOnce(null);
+
+    await expect(
+      replayFailedSorobanOutboxEntry("outbox-other-org", "org-1")
+    ).resolves.toBeNull();
+    expect(prisma.sorobanOutbox.updateMany).not.toHaveBeenCalled();
   });
 });
 

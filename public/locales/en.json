@@ -66,6 +66,26 @@
     "success": "Registration successful",
     "error": "Registration failed"
   },
+  "email": {
+    "invite": {
+      "subject": "You're invited to TrustBridge",
+      "heading": "Your TrustBridge invitation",
+      "greeting": "Hello {recipientName}, you have been invited to join the TrustBridge contributor program.",
+      "greetingFallback": "there",
+      "codeLabel": "Invitation code",
+      "expires": "This invitation expires on {date}.",
+      "noExpiry": "This invitation does not have an expiration date.",
+      "instructions": "Use this code when completing your TrustBridge registration.",
+      "action": "Open registration"
+    },
+    "ban": {
+      "subject": "TrustBridge account access notice",
+      "heading": "Your contributor account has been suspended",
+      "greeting": "Hello @{githubUsername}, a TrustBridge maintainer has suspended your contributor account.",
+      "reasonLabel": "Reason",
+      "nextSteps": "If you believe this action was made in error, contact the TrustBridge maintainers to discuss it."
+    }
+  },
   "date": {
     "formats": {
       "short": "{year}-{month}-{day}",

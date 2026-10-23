@@ -7,13 +7,20 @@ interface FreezeWindowBannerProps {
   end?: string;
   /** Human-readable reason from the freeze-window check. */
   reason?: string;
+  /**
+   * Whether the freeze window is currently active. Defaults to `true` so
+   * existing call sites that only render the banner while active keep working.
+   * When `false`, the banner renders nothing — useful for Storybook state
+   * coverage and for parents that always mount the banner.
+   */
+  active?: boolean;
 }
 
 /**
  * Displays a prominent amber alert banner while a Wave freeze window is active.
  * Rendered only when the freeze is active; the parent decides whether to render
  * this component at all by reading `isFreezeWindowActive()` server-side or via
- * an API endpoint.
+ * an API endpoint. Passing `active={false}` renders nothing.
  *
  * Light/dark colours both meet WCAG 2.1 AA contrast requirements.
  */
@@ -21,7 +28,10 @@ export function FreezeWindowBanner({
   start,
   end,
   reason,
+  active = true,
 }: FreezeWindowBannerProps) {
+  if (!active) return null;
+
   const fmt = (iso?: string) => {
     if (!iso) return null;
     try {

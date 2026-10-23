@@ -90,6 +90,12 @@ Maintainer check flow (two-tier: org, then optionally team):
 2. If `GITHUB_MAINTAINER_TEAM` is set and the org check passed, it additionally calls `GET /orgs/{org}/teams/{team_slug}/memberships/{username}` and requires an `active` membership state. `GITHUB_MAINTAINER_TEAM` is optional — when unset, step 2 is skipped entirely and the org check alone determines maintainer status, matching prior behavior.
 3. Sets `session.user.isMaintainer` boolean from the result.
 
+**`maintainerOrgId` on session and JWT.** In addition to `isMaintainer`, the JWT callback now stores the resolved org identifier in `token.maintainerOrgId` (sourced from `GITHUB_MAINTAINER_ORG`). This value is copied to `session.user.maintainerOrgId` by the session callback so that every server component and API route can read the org scope from a **typed** field rather than reading an environment variable directly or casting to an unsafe default string.
+
+- When `GITHUB_MAINTAINER_ORG` is set, `maintainerOrgId` carries its value.
+- When the env var is absent (single-tenant / no-org deployments), `maintainerOrgId` defaults to `"default"` — a stable, predictable string that Prisma queries and audit log helpers can filter on without null-checking.
+- `getMaintainerOrgId(session)` in `src/lib/api-auth.ts` is the canonical helper for reading this value in API routes; it falls back to `"default"` for sessions that were created before the field was introduced.
+
 **Fail closed on API errors.** Both checks treat a non-`ok` response (including `403`/`429` rate limiting) or a network failure as "not a member" rather than throwing — a GitHub outage degrades to non-maintainer access, never a crashed sign-in.
 
 **Audit trail.** A user who passes the org check but fails the team check is recorded via `recordAuditLog` (`src/lib/audit.ts`) with action `maintainer_access_denied_team` and `{ team }` metadata, so maintainers can review near-misses through `/api/audit`. Successful checks are not logged individually to avoid noise.

@@ -20,10 +20,22 @@ import type { HorizonCheckResult } from "@/types";
  *
  * This helper normalizes all of that into a single discriminated union so
  * UI code can `switch` on `outcome.kind` instead of re-deriving these rules.
+ *
+ * Retries: transient failures (timeout, network error, circuit-open, and
+ * 429/5xx responses) are retried a bounded number of times. Every attempt
+ * for a single logical check reuses the same `Idempotency-Key` header so the
+ * server can dedupe side effects (e.g. recheck notifications) and a retried
+ * request never double-applies them.
  */
 
 /** How long to wait for `/api/check` before treating the request as timed out. */
 export const CHECK_TIMEOUT_MS = 10_000;
+
+/** Maximum number of attempts (initial + retries) for a single check. */
+export const CHECK_MAX_ATTEMPTS = 3;
+
+/** Base backoff between retries, in milliseconds (exponential). */
+export const CHECK_RETRY_BASE_MS = 250;
 
 export type CheckOutcome =
   | { kind: "ok"; result: HorizonCheckResult }
@@ -55,13 +67,55 @@ function parseRetryAfter(response: Response): number | null {
 }
 
 /**
- * POST an address to `/api/check` and normalize the response into a
- * `CheckOutcome`. Never throws — all failure modes (timeout, network error,
- * non-2xx status, transient Horizon failure) are represented as outcomes.
+ * Generate a stable idempotency key for a single logical check. Uses
+ * `crypto.randomUUID` when available and falls back to a random string so the
+ * key is always present (the server dedupes on it).
  */
-export async function checkAddressViaApi(
+function createIdempotencyKey(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+  return `check-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * True when an outcome represents a transient failure worth retrying. A
+ * `rate_limited` outcome is retried only when the server did not ask us to
+ * wait longer than our bounded backoff budget.
+ */
+function isRetryable(outcome: CheckOutcome): boolean {
+  switch (outcome.kind) {
+    case "timeout":
+    case "network_error":
+    case "circuit_open":
+      return true;
+    case "error":
+      return outcome.status >= 500;
+    case "rate_limited":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Perform a single attempt against `/api/check`. Never throws — all failure
+ * modes are represented as outcomes. The `idempotencyKey` is sent on every
+ * attempt so retries are deduplicated server-side.
+ */
+async function attemptCheck(
   address: string,
-  options: { assetCode?: string; assetIssuer?: string } = {}
+  options: { assetCode?: string; assetIssuer?: string },
+  idempotencyKey: string
 ): Promise<CheckOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
@@ -69,7 +123,10 @@ export async function checkAddressViaApi(
   try {
     const response = await fetch("/api/check", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+      },
       body: JSON.stringify({
         address,
         asset_code: options.assetCode,
@@ -123,5 +180,71 @@ export async function checkAddressViaApi(
     return { kind: "network_error" };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * POST an address to `/api/check` and normalize the response into a
+ * `CheckOutcome`. Never throws — all failure modes (timeout, network error,
+ * non-2xx status, transient Horizon failure) are represented as outcomes.
+ *
+ * Transient failures are retried up to `CHECK_MAX_ATTEMPTS` total attempts,
+ * reusing a single `Idempotency-Key` across every attempt so retries cannot
+ * double-apply side effects. The final attempt's outcome is returned.
+ */
+export async function checkAddressViaApi(
+  address: string,
+  options: { assetCode?: string; assetIssuer?: string } = {}
+): Promise<CheckOutcome> {
+  const idempotencyKey = createIdempotencyKey();
+  let outcome: CheckOutcome = { kind: "network_error" };
+
+  for (let attempt = 0; attempt < CHECK_MAX_ATTEMPTS; attempt++) {
+    outcome = await attemptCheck(address, options, idempotencyKey);
+
+    if (outcome.kind === "ok" || !isRetryable(outcome)) {
+      return outcome;
+    }
+
+    const isLastAttempt = attempt === CHECK_MAX_ATTEMPTS - 1;
+    if (isLastAttempt) break;
+
+    // Honor a server-provided Retry-After when present, otherwise use
+    // exponential backoff. Cap the wait so a large Retry-After does not
+    // stall the UI indefinitely.
+    const backoff = CHECK_RETRY_BASE_MS * 2 ** attempt;
+    const retryAfterMs =
+      outcome.kind === "rate_limited" && outcome.retryAfterSeconds !== null
+        ? outcome.retryAfterSeconds * 1000
+        : 0;
+    await sleep(Math.min(Math.max(backoff, retryAfterMs), CHECK_TIMEOUT_MS));
+  }
+
+  return outcome;
+}
+
+/**
+ * Human-readable, actionable message for a `CheckOutcome`. UI code should
+ * render this instead of re-deriving copy per outcome kind, so degraded
+ * states (circuit open, timeout, network failure) stay consistent.
+ */
+export function describeCheckOutcome(outcome: CheckOutcome): string {
+  switch (outcome.kind) {
+    case "ok":
+      return "Check completed.";
+    case "rate_limited":
+      return outcome.retryAfterSeconds !== null
+        ? `Too many requests. Please retry in ${outcome.retryAfterSeconds}s.`
+        : "Too many requests. Please try again shortly.";
+    case "circuit_open":
+      return "Stellar services are temporarily unavailable. Please try again in a moment.";
+    case "timeout":
+      return "The check timed out. Please try again.";
+    case "network_error":
+      return "Network error while checking the address. Please check your connection and retry.";
+    case "error":
+      return outcome.errors[0] ?? "Failed to check address.";
+    default:
+      return "Failed to check address.";
   }
 }

@@ -63,7 +63,7 @@ export default async function PublicProfilePage({ params }: Props) {
   );
 
   return (
-    <main className="mx-auto max-w-xl px-6 py-16 sm:px-8">
+    <main id="main-content" tabIndex={-1} className="mx-auto max-w-xl px-6 py-16 sm:px-8">
       <Card>
         <CardHeader className="pb-4">
           <div className="flex items-center gap-3">

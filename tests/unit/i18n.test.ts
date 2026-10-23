@@ -1,4 +1,16 @@
-import { describe, it, expect } from 'vitest';
+/**
+ * @vitest-environment jsdom
+ *
+ * i18n tests — issues #514 and #515.
+ *
+ * The docblock above runs this file in jsdom so the I18nProvider can be
+ * rendered with @testing-library/react (vitest.config.ts only maps
+ * *.test.tsx to jsdom); the locale-file and i18n-config assertions below
+ * work unchanged in either environment.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
+import React from 'react';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -7,6 +19,8 @@ import {
   isSupportedLocale,
   resolveLocale,
 } from '@/lib/i18n-config';
+import * as StaticI18n from '@/lib/i18n-context';
+import type { SupportedLocale } from '@/lib/i18n-config';
 
 // ---------------------------------------------------------------------------
 // Shared config module — issue #515
@@ -157,3 +171,208 @@ function flattenKeys(obj: unknown, prefix = ''): string[] {
   }
   return keys;
 }
+
+// ---------------------------------------------------------------------------
+// I18nProvider — default locale first paint — issue #514
+// ---------------------------------------------------------------------------
+
+function readLocale(locale: string): Record<string, any> {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), 'public/locales', `${locale}.json`),
+      'utf-8',
+    ),
+  );
+}
+
+/** setLocale captured from the most recently rendered provider. */
+let setLocale: (locale: SupportedLocale) => void;
+
+/**
+ * Renders I18nProvider with a probe that resolves keys through
+ * useTranslations.  React.createElement instead of JSX: this file must stay
+ * `.ts` (issue #514 asks for tests/unit/i18n.test.ts) and esbuild's `.ts`
+ * loader rejects JSX.
+ *
+ * Accepts a module namespace so the failure test can render a freshly
+ * imported provider whose locale bundle is mocked.
+ */
+function renderProvider(mod: typeof StaticI18n = StaticI18n) {
+  function Probe() {
+    const t = mod.useTranslations();
+    return React.createElement(
+      'div',
+      null,
+      React.createElement(
+        'span',
+        { 'data-testid': 'title' },
+        t('dashboard.title'),
+      ),
+      React.createElement(
+        'span',
+        { 'data-testid': 'missing' },
+        t('no.such.key', 'Fallback default'),
+      ),
+    );
+  }
+
+  function Harness() {
+    const { setLocale: set } = mod.useI18n();
+    setLocale = set;
+    return React.createElement(Probe);
+  }
+
+  return render(
+    React.createElement(mod.I18nProvider, null, React.createElement(Harness)),
+  );
+}
+
+describe('I18nProvider — default locale first paint (#514)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns English strings on first render (no flash of raw keys)', () => {
+    // No await / no act flush: the statically imported default bundle must
+    // be synchronously present in initial state, before any effect or async
+    // import could resolve.
+    renderProvider();
+    expect(screen.getByTestId('title')).toHaveTextContent(
+      readLocale(DEFAULT_LOCALE).dashboard.title,
+    );
+  });
+
+  it('falls back to defaultValue for a missing key', () => {
+    renderProvider();
+    expect(screen.getByTestId('missing')).toHaveTextContent(
+      'Fallback default',
+    );
+  });
+
+  it('async locale switch still loads the es bundle', async () => {
+    renderProvider();
+
+    await act(async () => {
+      setLocale('es');
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('title')).toHaveTextContent(
+        readLocale('es').dashboard.title,
+      ),
+    );
+  });
+
+  it('async locale switch still loads the pt bundle', async () => {
+    renderProvider();
+
+    await act(async () => {
+      setLocale('pt');
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('title')).toHaveTextContent(
+        readLocale('pt').dashboard.title,
+      ),
+    );
+  });
+
+  it('switching back to en restores the statically bundled messages', async () => {
+    renderProvider();
+
+    await act(async () => {
+      setLocale('pt');
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('title')).toHaveTextContent(
+        readLocale('pt').dashboard.title,
+      ),
+    );
+
+    await act(async () => {
+      setLocale('en');
+    });
+    expect(screen.getByTestId('title')).toHaveTextContent(
+      readLocale('en').dashboard.title,
+    );
+  });
+
+  it('rapid locale toggles settle on the last selection (no setState race)', async () => {
+    renderProvider();
+
+    await act(async () => {
+      // Fire both switches without awaiting the first import.
+      setLocale('es');
+      setLocale('pt');
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('title')).toHaveTextContent(
+        readLocale('pt').dashboard.title,
+      ),
+    );
+
+    // Give a stale in-flight import time to land and (incorrectly)
+    // overwrite the newer selection.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(screen.getByTestId('title')).toHaveTextContent(
+      readLocale('pt').dashboard.title,
+    );
+  });
+
+  it('logs a console error and falls back to English when a bundle import fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // resolveLocale maps unknown strings to 'en', so an unsupported locale
+    // can never reach the import — mock a *supported* bundle instead and
+    // load a fresh copy of the provider so only this test sees the mock.
+    vi.resetModules();
+    vi.doMock('../../public/locales/pt.json', () => {
+      throw new Error('simulated bundle load failure');
+    });
+    const fresh = await import('@/lib/i18n-context');
+
+    try {
+      renderProvider(fresh);
+
+      await act(async () => {
+        setLocale('pt');
+      });
+
+      // Logs the failure…
+      await waitFor(() =>
+        expect(errorSpy).toHaveBeenCalledWith(
+          'Failed to load locale pt:',
+          expect.anything(),
+        ),
+      );
+
+      // …without crashing, and falls back to the statically bundled English
+      // messages instead of going empty / rendering raw keys.
+      expect(screen.getByTestId('title')).toHaveTextContent(
+        readLocale('en').dashboard.title,
+      );
+    } finally {
+      vi.doUnmock('../../public/locales/pt.json');
+      vi.resetModules();
+    }
+  });
+});
+
+describe('Providers tree', () => {
+  it('still wraps the app with I18nProvider', () => {
+    const source = fs.readFileSync(
+      path.join(process.cwd(), 'src/components/Providers.tsx'),
+      'utf-8',
+    );
+    expect(source).toContain('<I18nProvider>');
+    expect(source).toContain('</I18nProvider>');
+  });
+});

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { recordAuditLog } from "@/lib/audit";
 import { buildContributorsCsv, getContributorsCsvFilename } from "@/lib/csv-export";
 import { buildTreasuryExportEmailBody, sendEmailNotification } from "@/lib/email";
@@ -12,6 +14,8 @@ import { sendCronExportAlert, pingCronExportSuccess } from "@/lib/cron-export-al
 import type { ContributorRow } from "@/types";
 
 const logger = new StructuredLogger("cron-export");
+const CRON_EXPORT_LOCK_ID = "nightly-treasury-export";
+const CRON_EXPORT_LOCK_LEASE_MS = 60 * 60 * 1000;
 
 export type CronExportStatus = "ok" | "error" | "skipped";
 
@@ -42,6 +46,51 @@ export interface RunCronExportOptions {
 let lastRunAt: number | null = null;
 let lastResult: CronExportResult | null = null;
 
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
+}
+
+async function acquireCronExportLock(now: number): Promise<string | null> {
+  const token = randomUUID();
+  const leaseExpiresAt = new Date(now + CRON_EXPORT_LOCK_LEASE_MS);
+
+  try {
+    await prisma.cronExportLock.create({
+      data: { id: CRON_EXPORT_LOCK_ID, token, leaseExpiresAt },
+    });
+    return token;
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+  }
+
+  const reclaimed = await prisma.cronExportLock.updateMany({
+    where: {
+      id: CRON_EXPORT_LOCK_ID,
+      leaseExpiresAt: { lte: new Date(now) },
+    },
+    data: { token, leaseExpiresAt },
+  });
+
+  return reclaimed.count === 1 ? token : null;
+}
+
+async function releaseCronExportLock(token: string): Promise<void> {
+  try {
+    await prisma.cronExportLock.deleteMany({
+      where: { id: CRON_EXPORT_LOCK_ID, token },
+    });
+  } catch (error) {
+    logger.error("cron_export_lock_release_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 function getMinIntervalMs(): number {
   const parsed = Number.parseInt(
     process.env.CRON_EXPORT_MIN_INTERVAL_MS ?? "60000",
@@ -61,8 +110,8 @@ export function getTreasuryDestinationEmail(): string {
 /**
  * Execute the automated nightly treasury CSV export.
  *
- * Rate-limited via `CRON_EXPORT_MIN_INTERVAL_MS` to prevent spamming destinations
- * during retry storms.
+ * Protected by a database lease across app instances and rate-limited via
+ * `CRON_EXPORT_MIN_INTERVAL_MS` to prevent duplicate files and retry storms.
  * Never throws: catches all database or mail errors and returns a structured result.
  */
 export async function runCronExport(
@@ -84,11 +133,24 @@ export async function runCronExport(
     };
   }
 
-  lastRunAt = now;
   const startedAt = new Date(now).toISOString();
-  logger.info("cron_export_started", { startedAt });
+  let lockToken: string | null = null;
 
   try {
+    lockToken = await acquireCronExportLock(now);
+    if (!lockToken) {
+      logger.info("cron_export_skipped_in_progress", { startedAt });
+      return {
+        status: "skipped",
+        startedAt,
+        durationMs: 0,
+        error: "Another treasury export is already in progress",
+      };
+    }
+
+    lastRunAt = now;
+    logger.info("cron_export_started", { startedAt });
+
     const registrations = await prisma.registration.findMany({
       where: { deletedAt: null },
       include: {
@@ -237,6 +299,10 @@ export async function runCronExport(
     void sendCronExportAlert(lastResult);
 
     return lastResult;
+  } finally {
+    if (lockToken) {
+      await releaseCronExportLock(lockToken);
+    }
   }
 }
 

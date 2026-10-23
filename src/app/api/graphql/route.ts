@@ -41,6 +41,18 @@ const MAX_CONTRIBUTORS = 100;
 const DEFAULT_CONTRIBUTORS = 25;
 const MAX_REQUESTS_PER_MINUTE = 120;
 
+const VERIFICATION_STATUSES = ["verified", "unverified", "banned"] as const;
+type VerificationStatus = (typeof VERIFICATION_STATUSES)[number];
+
+const verificationStatusEnum = new GraphQLEnumType({
+  name: "VerificationStatus",
+  values: {
+    VERIFIED: { value: "verified" },
+    UNVERIFIED: { value: "unverified" },
+    BANNED: { value: "banned" },
+  },
+});
+
 const contributorType = new GraphQLObjectType<ContributorRow>({
   name: "Contributor",
   fields: {
@@ -96,14 +108,19 @@ const queryType = new GraphQLObjectType({
       args: {
         first: { type: GraphQLInt, defaultValue: DEFAULT_CONTRIBUTORS },
         after: { type: GraphQLString },
+        verificationStatus: { type: verificationStatusEnum },
       },
-      resolve: async (_source, _args, context: { isMaintainer: boolean }) => {
+      resolve: async (
+        _source,
+        args: { first?: number; after?: string; verificationStatus?: VerificationStatus },
+        context: { isMaintainer: boolean }
+      ) => {
         if (!context.isMaintainer) {
           throw new GraphQLError("Forbidden", {
             extensions: { code: "FORBIDDEN" },
           });
         }
-        return getContributorsPaginated(_args.after, _args.first);
+        return getContributorsPaginated(args.after, args.first, args.verificationStatus);
       },
     },
   },
@@ -188,6 +205,74 @@ type ContributorsLimit =
   | { ok: true; limit: number }
   | { ok: false; error: string };
 
+/**
+ * Validate the `contributors(verificationStatus:)` argument.
+ *
+ * The enum type already rejects unknown literals during validation, but a
+ * variable can carry an arbitrary JSON value that only fails at execution
+ * time. We coerce variables against the enum here so the cost walk can reject
+ * malformed filters with a stable, actionable message before the resolver
+ * runs — and so an empty string never reaches the database layer.
+ */
+function resolveVerificationStatus(
+  valueNode: ValueNode | undefined,
+  variables: Record<string, unknown>
+): VerificationStatusResult {
+  const message = `contributors.verificationStatus must be one of ${VERIFICATION_STATUSES.join(
+    ", "
+  )}`;
+
+  if (!valueNode || valueNode.kind === Kind.NULL) {
+    return { ok: true, status: undefined };
+  }
+
+  let raw: unknown;
+
+  if (valueNode.kind === Kind.VARIABLE) {
+    const variableName = valueNode.name.value;
+    if (!(variableName in variables)) {
+      return { ok: true, status: undefined };
+    }
+    const coercionErrors: GraphQLError[] = [];
+    const coerced = coerceInputValue(
+      variables[variableName],
+      verificationStatusEnum,
+      (_path, _invalidValue, error) => {
+        coercionErrors.push(error);
+      }
+    );
+    if (coercionErrors.length > 0) {
+      return {
+        ok: false,
+        error: `${message} — $${variableName} is invalid: ${coercionErrors[0].message}`,
+      };
+    }
+    raw = coerced;
+  } else {
+    raw = valueFromAST(valueNode, verificationStatusEnum);
+    if (raw === undefined) {
+      return { ok: false, error: message };
+    }
+  }
+
+  if (raw === null || raw === undefined) {
+    return { ok: true, status: undefined };
+  }
+
+  if (
+    typeof raw !== "string" ||
+    !(VERIFICATION_STATUSES as readonly string[]).includes(raw)
+  ) {
+    return { ok: false, error: message };
+  }
+
+  return { ok: true, status: raw as VerificationStatus };
+}
+
+type VerificationStatusResult =
+  | { ok: true; status: VerificationStatus | undefined }
+  | { ok: false; error: string };
+
 function analyzeDocument(
   definitions: readonly DefinitionNode[],
   variables: Record<string, unknown>
@@ -203,6 +288,7 @@ function analyzeDocument(
   let cost = 0;
   let tooDeep = false;
   let pageSizeError: string | null = null;
+  let verificationStatusError: string | null = null;
 
   function inspect(
     selectionSet: SelectionSetNode,
@@ -217,20 +303,35 @@ function analyzeDocument(
         if (nextDepth > MAX_QUERY_DEPTH) tooDeep = true;
 
         let childMultiplier = multiplier;
-        if (selection.name.value === "contributors" && !pageSizeError) {
-          const firstArgument = selection.arguments?.find(
-            (argument) => argument.name.value === "first"
-          );
-          const resolved = resolveContributorsLimit(firstArgument?.value, variables);
-          if (!resolved.ok) {
-            // Stop growing the multiplier: an unusable page size must not be
-            // able to widen the rest of the cost walk.
-            pageSizeError = resolved.error;
-            childMultiplier = multiplier;
-          } else {
-            // Multiplier comes from the validated, coerced limit — never a raw
-            // variable value.
-            childMultiplier *= resolved.limit;
+        if (selection.name.value === "contributors") {
+          if (!pageSizeError) {
+            const firstArgument = selection.arguments?.find(
+              (argument) => argument.name.value === "first"
+            );
+            const resolved = resolveContributorsLimit(firstArgument?.value, variables);
+            if (!resolved.ok) {
+              // Stop growing the multiplier: an unusable page size must not be
+              // able to widen the rest of the cost walk.
+              pageSizeError = resolved.error;
+              childMultiplier = multiplier;
+            } else {
+              // Multiplier comes from the validated, coerced limit — never a raw
+              // variable value.
+              childMultiplier *= resolved.limit;
+            }
+          }
+
+          if (!verificationStatusError) {
+            const statusArgument = selection.arguments?.find(
+              (argument) => argument.name.value === "verificationStatus"
+            );
+            const resolvedStatus = resolveVerificationStatus(
+              statusArgument?.value,
+              variables
+            );
+            if (!resolvedStatus.ok) {
+              verificationStatusError = resolvedStatus.error;
+            }
           }
         }
 
@@ -238,122 +339,6 @@ function analyzeDocument(
         if (selection.selectionSet) {
           inspect(selection.selectionSet, nextDepth, childMultiplier, fragmentPath);
         }
-      } else if (selection.kind === "InlineFragment") {
-        inspect(selection.selectionSet, depth, multiplier, fragmentPath);
-      } else if (!fragmentPath.has(selection.name.value)) {
-        const fragment = fragments.get(selection.name.value);
-        if (fragment) {
-          const nextPath = new Set(fragmentPath);
-          nextPath.add(selection.name.value);
-          inspect(fragment.selectionSet, depth, multiplier, nextPath);
-        }
-      }
-    }
-  }
+      } else if (selection.kind === "Inlin
 
-  for (const definition of definitions) {
-    if (definition.kind === "OperationDefinition") {
-      if (definition.operation !== "query") {
-        return "Only read-only query operations are supported";
-      }
-      inspect(definition.selectionSet, 0, 1, new Set());
-    }
-  }
-
-  if (tooDeep) return `Query depth exceeds the limit of ${MAX_QUERY_DEPTH}`;
-  if (pageSizeError) return pageSizeError;
-  if (fieldCount > MAX_QUERY_FIELDS) {
-    return `Query field count exceeds the limit of ${MAX_QUERY_FIELDS}`;
-  }
-  if (cost > MAX_QUERY_COST) {
-    return `Query cost exceeds the limit of ${MAX_QUERY_COST}`;
-  }
-  return null;
-}
-
-export async function POST(request: NextRequest) {
-  const clientIp = extractClientIp(request);
-  const rateLimit = checkRateLimit(clientIp, {
-    maxRequests: MAX_REQUESTS_PER_MINUTE,
-  });
-  const rateLimitHeaders = buildRateLimitHeaders(
-    rateLimit,
-    MAX_REQUESTS_PER_MINUTE
-  );
-  if (!rateLimit.allowed) {
-    return NextResponse.json(
-      { errors: [{ message: "Rate limit exceeded" }] },
-      { status: 429, headers: rateLimitHeaders }
-    );
-  }
-
-  const bodyText = await request.text();
-  if (Buffer.byteLength(bodyText, "utf8") > MAX_QUERY_BYTES) {
-    return NextResponse.json(
-      { errors: [{ message: "Query body is too large" }] },
-      { status: 413, headers: rateLimitHeaders }
-    );
-  }
-
-  let body: { query?: unknown; variables?: unknown };
-  try {
-    body = JSON.parse(bodyText);
-  } catch {
-    return NextResponse.json(
-      { errors: [{ message: "Invalid JSON body" }] },
-      { status: 400, headers: rateLimitHeaders }
-    );
-  }
-
-  if (typeof body.query !== "string") {
-    return NextResponse.json(
-      { errors: [{ message: "A query string is required" }] },
-      { status: 400, headers: rateLimitHeaders }
-    );
-  }
-
-  const variables =
-    body.variables && typeof body.variables === "object" && !Array.isArray(body.variables)
-      ? (body.variables as Record<string, unknown>)
-      : {};
-
-  let document;
-  try {
-    document = parse(body.query);
-  } catch (error) {
-    return NextResponse.json(
-      { errors: [{ message: error instanceof Error ? error.message : "Invalid GraphQL query" }] },
-      { status: 400, headers: rateLimitHeaders }
-    );
-  }
-
-  const limitError = analyzeDocument(document.definitions, variables);
-  if (limitError) {
-    return NextResponse.json(
-      { errors: [{ message: limitError }] },
-      { status: 400, headers: rateLimitHeaders }
-    );
-  }
-
-  const validationRules =
-    process.env.NODE_ENV === "production"
-      ? [NoSchemaIntrospectionCustomRule]
-      : undefined;
-  const validationErrors = validate(schema, document, validationRules);
-  if (validationErrors.length > 0) {
-    return NextResponse.json(
-      { errors: validationErrors.map((error) => ({ message: error.message })) },
-      { status: 400, headers: rateLimitHeaders }
-    );
-  }
-
-  const session = await requireMaintainerSession();
-  const result = await graphql({
-    schema,
-    source: body.query,
-    variableValues: variables,
-    contextValue: { isMaintainer: Boolean(session) },
-  });
-
-  return NextResponse.json(result);
-}
+/* … truncated 3560 chars — edit only what you need near the top … */

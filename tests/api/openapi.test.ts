@@ -36,8 +36,38 @@ describe("/api/openapi.json", () => {
     expect(spec.paths["/api/check"]).toBeDefined();
     expect(spec.paths["/api/contributors"]).toBeDefined();
     expect(spec.paths["/api/stats"]).toBeDefined();
+    expect(spec.paths["/api/metrics"]).toBeDefined();
+    expect(spec.paths["/api/metrics/prometheus"]).toBeDefined();
+    expect(spec.paths["/api/disputes"]).toBeDefined();
+    expect(spec.paths["/api/contributors/queue/health"]).toBeDefined();
+    expect(spec.paths["/api/contributors/queue/status"]).toBeDefined();
+    expect(spec.paths["/api/contributors/queue/progress"]).toBeDefined();
+    expect(spec.paths["/api/contributors/queue/jobs/{jobId}"]).toBeDefined();
+    expect(spec.paths["/api/contributors/queue/dlq"]).toBeDefined();
+    expect(
+      spec.paths["/api/contributors/queue/dlq/{jobId}/retry"]
+    ).toBeDefined();
     expect(spec.paths["/api/maintainer/ban"]).toBeDefined();
     expect(spec.paths["/api/registrations/{id}/restore"]).toBeDefined();
+  });
+
+  it("documents metrics, disputes, and queue methods and auth requirements", async () => {
+    const request = new Request("http://localhost:3000/api/openapi.json");
+    const response = await GET(request);
+    const spec = await response.json();
+
+    expect(spec.paths["/api/metrics"].get.security).toEqual([
+      { bearerAuth: [] },
+    ]);
+    expect(spec.paths["/api/metrics/prometheus"].get.responses["200"].content[
+      "text/plain"
+    ]).toBeDefined();
+    expect(spec.paths["/api/disputes"]).toHaveProperty("get");
+    expect(spec.paths["/api/disputes"]).toHaveProperty("post");
+    expect(spec.paths["/api/disputes"]).toHaveProperty("patch");
+    expect(
+      spec.paths["/api/contributors/queue/dlq/{jobId}/retry"].post.security
+    ).toEqual([{ bearerAuth: [] }]);
   });
 
   it("documents maintainer ban endpoint with request body and error codes", async () => {

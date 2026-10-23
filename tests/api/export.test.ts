@@ -122,13 +122,17 @@ describe("GET /api/contributors/export/csv", () => {
       expect(recordAuditLog).not.toHaveBeenCalled();
     });
 
-    it("returns 401 for non-maintainer without API key", async () => {
+    it("denies contributor export before reading or serializing data", async () => {
       vi.mocked(requireMaintainerSession).mockResolvedValue(null);
       vi.mocked(requireApiKeyScope).mockResolvedValue(null);
 
       const res = await csvGET(makeRequest());
 
       expect(res.status).toBe(401);
+      expect((await res.json()).error).toBe("Unauthorized");
+      expect(getContributors).not.toHaveBeenCalled();
+      expect(buildContributorsCsv).not.toHaveBeenCalled();
+      expect(getContributorsCsvFilename).not.toHaveBeenCalled();
       expect(recordAuditLog).not.toHaveBeenCalled();
     });
 
@@ -362,13 +366,17 @@ describe("GET /api/contributors/export/json", () => {
       expect(recordAuditLog).not.toHaveBeenCalled();
     });
 
-    it("returns 401 for non-maintainer without API key", async () => {
+    it("denies contributor export before reading or serializing data", async () => {
       vi.mocked(requireMaintainerSession).mockResolvedValue(null);
       vi.mocked(requireApiKeyScope).mockResolvedValue(null);
 
       const res = await jsonGET(makeRequest());
 
       expect(res.status).toBe(401);
+      expect((await res.json()).error).toBe("Unauthorized");
+      expect(getContributors).not.toHaveBeenCalled();
+      expect(buildJson).not.toHaveBeenCalled();
+      expect(buildJsonFilename).not.toHaveBeenCalled();
       expect(recordAuditLog).not.toHaveBeenCalled();
     });
 
