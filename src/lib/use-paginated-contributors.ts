@@ -65,6 +65,19 @@ function normalizePageSize(pageSize: number): number {
 }
 
 /**
+ * Normalize a raw `cursor` query-string value into a usable cursor.
+ *
+ * Empty strings, whitespace-only values, and repeated params (`?cursor=a&cursor=b`
+ * yields the first value) are treated as "no cursor" so a malformed URL falls
+ * back to the first page instead of sending a bogus cursor to the API.
+ */
+function normalizeCursor(raw: string | null | undefined): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
  * Page-by-page cursor navigation for the maintainer dashboard.
  *
  * Unlike `useInfiniteContributors` (which accumulates all pages into one flat
@@ -75,6 +88,11 @@ function normalizePageSize(pageSize: number): number {
  * The cursor stack keeps track of every forward step so that going back is
  * simply popping the last cursor rather than re-fetching the entire history.
  *
+ * The `cursor` query param is the source of truth for the current page (#530):
+ * it is read on mount, kept in sync with browser back/forward navigation, and
+ * written on every forward/back/reset step so a reload or shared link lands on
+ * the same page.
+ *
  * @param pageSize Number of contributors per page (default 25, max 100).
  */
 export function usePaginatedContributors(pageSize: number = ITEMS_PER_PAGE) {
@@ -84,7 +102,7 @@ export function usePaginatedContributors(pageSize: number = ITEMS_PER_PAGE) {
   const searchParams = useSearchParams();
 
   // Read initial cursor from URL on mount
-  const initialCursor = searchParams?.get("cursor") || null;
+  const initialCursor = normalizeCursor(searchParams?.get("cursor"));
 
   // Stack of cursors — entry[0] is initialCursor (or null for first page),
   // subsequent entries are the nextCursor values returned by each page.
@@ -92,7 +110,7 @@ export function usePaginatedContributors(pageSize: number = ITEMS_PER_PAGE) {
 
   // Sync cursor stack if the URL cursor changes externally (e.g. browser back/forward or direct navigation)
   useEffect(() => {
-    const urlCursor = searchParams?.get("cursor") || null;
+    const urlCursor = normalizeCursor(searchParams?.get("cursor"));
     setCursorStack((prev) => {
       const activeCursor = prev[prev.length - 1];
       if (activeCursor !== urlCursor) {
@@ -184,4 +202,3 @@ export function usePaginatedContributors(pageSize: number = ITEMS_PER_PAGE) {
     reset,
   };
 }
-

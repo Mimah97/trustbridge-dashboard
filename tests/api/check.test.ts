@@ -100,6 +100,10 @@ describe("POST /api/check", () => {
     vi.mocked(checkStellarAddress).mockResolvedValue({
       funded: true,
       trustline: true,
+      xlm_balance: "2",
+      readiness: "ready",
+      horizon_error: null,
+    } as never);
       trustline_authorized: true,
       verified: true,
       xlm_balance: "2",
@@ -175,6 +179,10 @@ describe("POST /api/check", () => {
     vi.mocked(checkStellarAddress).mockResolvedValue({
       funded: true,
       trustline: true,
+      xlm_balance: "2",
+      readiness: "ready",
+      horizon_error: null,
+    } as never);
       trustline_authorized: true,
       verified: true,
       xlm_balance: "2",

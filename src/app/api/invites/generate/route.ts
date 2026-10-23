@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { recordAuditLog } from "@/lib/audit";
 import { requireAdmin } from "@/lib/api-auth";
 import { assertSameOrigin } from "@/lib/csrf";
+import { buildInviteEmail, sendEmailNotification } from "@/lib/email";
 import { isFeatureEnabled } from "@/lib/feature-flags";
 import {
   createInvite,
@@ -15,13 +16,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 interface GenerateBulkInvitesRequest {
-  count: number;
+  count?: number;
   expiryDays?: number;
+  recipientEmails?: string[];
+  locale?: string;
 }
 
 interface GenerateBulkInvitesResponse {
   generated: number;
   invites: Array<{ code: string; createdAt: string; expiresAt: string | null }>;
+  emailDelivery?: { sent: number; failed: number };
 }
 
 export async function POST(request: NextRequest) {
@@ -42,12 +46,46 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = (await request.json()) as GenerateBulkInvitesRequest;
-  const { count = 10, expiryDays } = body;
+  let parsedBody: unknown;
+  try {
+    parsedBody = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+  }
+  if (!parsedBody || typeof parsedBody !== "object" || Array.isArray(parsedBody)) {
+    return NextResponse.json({ error: "Request body must be a JSON object" }, { status: 400 });
+  }
 
-  if (!count || count < 1 || count > 1000) {
+  const body = parsedBody as GenerateBulkInvitesRequest;
+  const { expiryDays, locale } = body;
+  if (
+    body.recipientEmails !== undefined &&
+    (!Array.isArray(body.recipientEmails) ||
+      body.recipientEmails.some((email) => typeof email !== "string"))
+  ) {
+    return NextResponse.json(
+      { error: "recipientEmails must be an array of email addresses" },
+      { status: 400 }
+    );
+  }
+
+  const recipientEmails = body.recipientEmails?.map((email) => email.trim());
+  const count = body.count ?? recipientEmails?.length ?? 10;
+
+  if (!Number.isInteger(count) || count < 1 || count > 1000) {
     return NextResponse.json(
       { error: "Count must be between 1 and 1000" },
+      { status: 400 }
+    );
+  }
+
+  if (
+    recipientEmails &&
+    (recipientEmails.length !== count ||
+      recipientEmails.some((email) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)))
+  ) {
+    return NextResponse.json(
+      { error: "Provide one valid recipient email for each invite" },
       { status: 400 }
     );
   }
@@ -65,6 +103,8 @@ export async function POST(request: NextRequest) {
     : null;
 
   const generatedInvites: Array<{ code: string; createdAt: string; expiresAt: string | null }> = [];
+  let emailSent = 0;
+  let emailFailed = 0;
 
   for (let i = 0; i < count; i++) {
     const code = generateInviteCode();
@@ -78,6 +118,26 @@ export async function POST(request: NextRequest) {
       createdAt: invite.createdAt.toISOString(),
       expiresAt: invite.expiresAt?.toISOString() ?? null,
     });
+
+    const recipientEmail = recipientEmails?.[i];
+    if (recipientEmail) {
+      try {
+        const template = buildInviteEmail({
+          inviteCode: code,
+          expiresAt,
+          locale,
+        });
+        const sent = await sendEmailNotification({
+          to: recipientEmail,
+          idempotencyScope: invite.id,
+          ...template,
+        });
+        if (sent) emailSent++;
+        else emailFailed++;
+      } catch {
+        emailFailed++;
+      }
+    }
   }
 
   await recordAuditLog({
@@ -87,12 +147,16 @@ export async function POST(request: NextRequest) {
     metadata: {
       count,
       expiryDays: expiryDays ?? null,
+      ...(recipientEmails
+        ? { emailRecipients: recipientEmails.length, emailSent, emailFailed }
+        : {}),
     },
   });
 
   return NextResponse.json({
     generated: generatedInvites.length,
     invites: generatedInvites,
+    ...(recipientEmails ? { emailDelivery: { sent: emailSent, failed: emailFailed } } : {}),
   } satisfies GenerateBulkInvitesResponse);
 }
 

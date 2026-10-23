@@ -95,6 +95,7 @@ describe("auth jwt callback - maintainer team scoping", () => {
     const token = await callJwt();
 
     expect(token.isMaintainer).toBe(true);
+    expect(token.maintainerOrgId).toBe("stellar-org");
     expect(recordAuditLog).not.toHaveBeenCalled();
   });
 
@@ -109,6 +110,8 @@ describe("auth jwt callback - maintainer team scoping", () => {
     const token = await callJwt("someone");
 
     expect(token.isMaintainer).toBe(false);
+    // maintainerOrgId is still set even when the user is denied
+    expect(token.maintainerOrgId).toBe("stellar-org");
     expect(recordAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "maintainer_access_denied_team",
@@ -129,6 +132,8 @@ describe("auth jwt callback - maintainer team scoping", () => {
     const token = await callJwt();
 
     expect(token.isMaintainer).toBe(true);
+    expect(token.maintainerOrgId).toBe("stellar-org");
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(recordAuditLog).not.toHaveBeenCalled();
   });
@@ -143,7 +148,10 @@ describe("auth jwt callback - maintainer team scoping", () => {
         jsonResponse({ message: "API rate limit exceeded" }, false)
       );
 
-    await expect(callJwt()).resolves.toMatchObject({ isMaintainer: false });
+    await expect(callJwt()).resolves.toMatchObject({
+      isMaintainer: false,
+      maintainerOrgId: "stellar-org",
+    });
   });
 
   it("resolves maintainer false without throwing when the team check hits a network error", async () => {
@@ -154,7 +162,21 @@ describe("auth jwt callback - maintainer team scoping", () => {
       .mockResolvedValueOnce(jsonResponse([{ login: "stellar-org" }]))
       .mockRejectedValueOnce(new Error("network down"));
 
-    await expect(callJwt()).resolves.toMatchObject({ isMaintainer: false });
+    await expect(callJwt()).resolves.toMatchObject({
+      isMaintainer: false,
+      maintainerOrgId: "stellar-org",
+    });
+  });
+
+  it("sets maintainerOrgId to 'default' when GITHUB_MAINTAINER_ORG is unset", async () => {
+    delete process.env.GITHUB_MAINTAINER_ORG;
+    delete process.env.GITHUB_MAINTAINER_TEAM;
+
+    // No fetch call expected — no org check takes place
+    const token = await callJwt();
+
+    expect(token.isMaintainer).toBeUndefined();
+    expect(token.maintainerOrgId).toBe("default");
   });
 
   it("enforces tenant isolation and prevents IDOR across maintainer orgs", () => {

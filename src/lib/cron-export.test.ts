@@ -14,6 +14,11 @@ vi.mock("@/lib/prisma", () => ({
     registration: {
       findMany: vi.fn(),
     },
+    cronExportLock: {
+      create: vi.fn(),
+      updateMany: vi.fn(),
+      deleteMany: vi.fn(),
+    },
   },
 }));
 
@@ -33,6 +38,9 @@ describe("cron-export", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetCronExportState();
+    vi.mocked(prisma.cronExportLock.create).mockResolvedValue({} as never);
+    vi.mocked(prisma.cronExportLock.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.cronExportLock.deleteMany).mockResolvedValue({ count: 1 });
     delete process.env.TREASURY_EXPORT_EMAIL;
     delete process.env.CRON_EXPORT_EMAIL;
     delete process.env.CRON_EXPORT_MIN_INTERVAL_MS;

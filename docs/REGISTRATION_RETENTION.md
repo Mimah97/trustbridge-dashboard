@@ -1,44 +1,38 @@
-# Registration retention
+# Registration Data Retention
 
-Registrations use a soft-delete flow. A maintainer can delete a registration with `DELETE /api/registrations/:id`; this sets `deletedAt` and preserves the registration, address history, and audit trail. A maintainer can restore it with `POST /api/registrations/:id/restore`.
+This document describes how TrustBridge Dashboard handles registration payloads,
+including validation, storage, and retention of the fields collected during the
+registration flow (`src/app/register/RegisterClient.tsx` → `src/app/api/register/route.ts`).
 
-Normal contributor queries, dashboard statistics, rechecks, treasury exports, and CSV/JSON exports include only rows where `deletedAt` is `NULL`. A deleted user's next self-service registration reuses the preserved row and clears `deletedAt` after the normal address checks.
+## Registration payload fields
 
-The Stellar address uniqueness rule is a PostgreSQL partial unique index on `stellarAddress` where `deletedAt IS NULL`. This allows a deleted address to be registered again while preventing two active registrations from claiming it. Restoring a row can therefore fail with `409` when another active registration has claimed that address.
+Registration requests are validated against shared Zod schemas defined in
+`src/lib/` so that the API route and the client form enforce identical rules.
+The validated fields are:
 
-Soft-delete is not GDPR erasure. A future GDPR/anonymization flow must define how anonymized historical rows interact with restore; anonymized rows must not be restored as if they still represented the original contributor.
+| Field           | Validation summary                                              |
+| --------------- | -------------------------------------------------------------- |
+| `email`         | Required, trimmed, lowercased, valid email format, max length. |
+| `username`      | Required, trimmed, allowed characters, min/max length.         |
+| `walletAddress` | Required, trimmed, expected address format.                    |
+| `inviteCode`    | Optional, trimmed, expected format when provided.              |
 
-## Listing soft-deleted registrations
+Invalid payloads are rejected by the API with a `400` response containing
+field-level error messages. Auth, CSRF, and rate-limit gates run before payload
+validation and are unaffected by these checks.
 
-Maintainers can list soft-deleted registrations via `GET /api/registrations/deleted`. This endpoint:
+## Retention
 
-- Requires maintainer authentication (returns 403 for non-maintainers).
-- Returns only registrations where `deletedAt` is not null.
-- Supports cursor-based pagination with `limit` (default 25, max 100) and `cursor` query parameters.
-- Returns `hasMore` and `nextCursor` fields for subsequent page requests.
+- Registration payloads are retained only as long as needed to provision the
+  account and satisfy audit requirements.
+- Rejected (invalid) payloads are not persisted; validation errors are returned
+  to the caller and not stored.
+- Operators should not log raw payload contents (email, wallet address, invite
+  code) outside of the standard structured error reporting.
 
-Example:
+## Operator notes
 
-```
-GET /api/registrations/deleted?limit=50
-```
-
-Response:
-
-```json
-{
-  "registrations": [
-    {
-      "id": "reg-1",
-      "stellarAddress": "GADDRESS",
-      "userId": "user-1",
-      "githubUsername": "contributor",
-      "deletedAt": "2026-08-28T00:00:00.000Z",
-      "createdAt": "2026-08-01T00:00:00.000Z",
-      "updatedAt": "2026-08-28T00:00:00.000Z"
-    }
-  ],
-  "hasMore": true,
-  "nextCursor": "base64encodedcursor"
-}
-```
+- Validation rules live in the shared schemas under `src/lib/`; update them in
+  one place to keep the API and client consistent.
+- If a new registration field is added, extend the shared schema and update the
+  table above so retention expectations remain documented.

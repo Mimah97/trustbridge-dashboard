@@ -3,8 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireMaintainerSession } from "@/lib/api-auth";
 import {
   API_KEY_RATE_LIMIT,
+  authenticateApiKey,
   buildRateLimitHeaders,
-  requireApiKeyScope,
+  hasScope,
+  insufficientScopeResponse,
 } from "@/lib/api-key-auth";
 import { recordAuditLog } from "@/lib/audit";
 import {
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
     actorId = session.user.id;
     actorLogin = session.user.githubUsername ?? null;
   } else {
-    const apiKeyAuth = await requireApiKeyScope(request, "export:read");
+    const apiKeyAuth = await authenticateApiKey(request);
 
     if (!apiKeyAuth) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -45,6 +47,10 @@ export async function GET(request: NextRequest) {
           ),
         }
       );
+    }
+
+    if (!hasScope(apiKeyAuth.scopes, "export:read")) {
+      return insufficientScopeResponse("export:read");
     }
 
     actorId = apiKeyAuth.createdById;

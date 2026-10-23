@@ -490,3 +490,5 @@ This project is licensed under the [MIT License](LICENSE).
 
 <!-- handsoff-issue-597 -->
 - #597: Add metrics histogram UI for recheck latency percentiles
+<!-- handsoff-issue-532 -->
+- #532: Add RBAC tests for maintainer vs contributor on /api/disputes

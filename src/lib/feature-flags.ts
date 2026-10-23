@@ -53,7 +53,7 @@ export const FEATURE_FLAGS: Record<FeatureFlagKey, FlagDefinition> = {
   },
   dlq_retry: {
     description:
-      "Allow maintainers to retry failed jobs from the dead-letter queue.",
+      "Allow maintainers to retry failed jobs and Soroban outbox items from their dead-letter queues.",
     default: true,
     risky: true,
   },

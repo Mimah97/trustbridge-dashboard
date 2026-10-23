@@ -14,15 +14,16 @@ import {
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { SnapshotDiffPanel } from "@/components/SnapshotDiffPanel";
 import { buildStalenessSummary } from "@/lib/stale-export";
-import type { ContributorRow, ReadinessStatus } from "@/types";
+import type {
+  ContributorRow,
+  ReadinessStatus,
+  WavePrepWorkspaceViewModel,
+} from "@/types";
 
-interface WavePrepWorkspaceProps {
-  contributors: ContributorRow[];
-  waveNumber?: number;
+export type WavePrepWorkspaceProps = WavePrepWorkspaceViewModel & {
   onExportCsv?: () => void;
   onExportJson?: () => void;
-  isExporting?: boolean;
-}
+};
 
 export function WavePrepWorkspace({
   contributors,

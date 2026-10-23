@@ -18,6 +18,7 @@ npx playwright show-report              # last run
 | `tests/e2e/maintainer.spec.ts` | Maintainer dashboard: access control, contributor table, re-check, metrics, settings. |
 | `tests/e2e/status.spec.ts` | Public health page (`/status`, issue #384): loads without auth, renders the heading, timestamp, overall banner and component checks, and refreshes via the "Check now" control against a mocked `/api/health`. |
 | `tests/e2e/settings-feature-flags.spec.ts` | Feature-flag panel on `/dashboard/settings` (issue #510): renders mocked flags with their keys, sources and enabled/disabled states, plus the loading, empty, error (HTTP 500) and re-request states. `GET /api/settings/feature-flags` resolves the deployment's real `FEATURE_*` environment, so every case intercepts it — see below. |
+| `tests/e2e/maintainer-a11y.spec.ts` | Accessibility gate for the maintainer settings page and the Wave prep / disputes sections (issue #511): runs axe against `/dashboard/settings`, the Wave prep workspace and the disputes panel, fails on serious/critical violations, and asserts keyboard focus order reaches the primary actions. |
 
 ## Accessibility gate (axe-core)
 
@@ -30,12 +31,19 @@ against it:
   baseline" — scans `/register` as a signed-in contributor.
 - `maintainer.spec.ts` → "the dashboard page has no axe violations beyond the
   baseline" — scans `/dashboard` as a signed-in maintainer.
+- `maintainer-a11y.spec.ts` → scans `/dashboard/settings`, the Wave prep
+  workspace and the disputes panel (issue #511), including modal dialogs both
+  open and closed.
 
-Both scans run with `withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])`
+All scans run with `withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])`
 (axe-core's own best-practice-only rules, like landmark/region checks, are
 left out — noisy and not what WCAG conformance requires) and are gated by the
 existing `test:e2e` script, so they run in CI on every push and PR with no
 separate workflow step.
+
+**Failing threshold.** The Wave/settings gate fails the run on any `serious`
+or `critical` violation. `minor` and `moderate` findings (including contrast
+issues) are logged but do not fail, per the issue's edge-case guidance.
 
 **Baseline allowlist.** `tests/e2e/axe-baseline.ts` exports
 `AXE_BASELINE_RULE_IDS`, a short, dated, commented list of axe rule ids
@@ -141,15 +149,6 @@ Test ids currently relied on:
 | `stellar-address-input`, `address-check-result`, `next-action-copy` | `src/components/AddressInput.tsx` |
 | `readiness-badge-<status>`, `readiness-description`, `readiness-next-step` | `src/components/TrustlineStatusBadge.tsx` |
 | `trustline-guidance` | `src/components/TrustlineGuidancePanel.tsx` |
-| `freighter-proof-card`, `freighter-detection-status`, `freighter-challenge` | `src/components/FreighterProofCard.tsx` |
-| `copy-challenge`, `sign-challenge`, `freighter-copy-error`, `freighter-sign-error` | ” |
-| `confirm-dialog`, `confirm-dialog-confirm`, `confirm-dialog-cancel`, `confirm-dialog-warning` | `src/components/ui/confirm-dialog.tsx` |
+| `freighter-proof-card`, `freighter-detection-status`, `freighter-challe
 
-## Avoiding flakes
-
-- Assert on a state, never on a delay. `AddressInput` debounces for 500 ms
-  before calling `/api/check`; `expect(page.getByTestId("address-check-result"))
-  .toBeVisible()` waits for the result rather than for the debounce.
-- Register every route mock **before** `page.goto()`.
-- `fullyParallel` is off and CI retries twice — a test that only passes on retry
-  is a bug report, not a pass.
+/* … truncated 691 chars — edit only what you need near the top … */

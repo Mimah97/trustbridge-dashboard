@@ -11,9 +11,27 @@ export const dynamic = "force-dynamic";
  * GET /api/health
  *
  * Lightweight liveness + readiness probe for the TrustBridge Dashboard.
+ *
+ * Consumed by `NetworkStatusPanel` to render live RPC health. The response
+ * shape is the `HealthResponse` contract from `@/lib/health`; the panel
+ * tolerates partial payloads, but this route always returns a well-formed
+ * body so operators get a stable contract.
  */
 export async function GET() {
-  const body = await runHealthChecks();
+  let body;
+  try {
+    body = await runHealthChecks();
+  } catch (error) {
+    // Never let a probe failure surface as an unhandled 500 — the panel
+    // renders this as an "unavailable" state instead of crashing.
+    body = {
+      status: "unavailable" as const,
+      checks: [],
+      timestamp: new Date().toISOString(),
+      error: error instanceof Error ? error.message : "Health check failed",
+    };
+  }
+
   return withPublicCors(
     NextResponse.json(body, {
       status: 200,

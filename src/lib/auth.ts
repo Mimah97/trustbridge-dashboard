@@ -221,6 +221,16 @@ export const authOptions: NextAuthOptions = {
             }
 
             token.isMaintainer = isMaintainer;
+            // Persist the org identifier on the JWT so session refreshes do
+            // not need another GitHub API call. Falls back to "default" when
+            // no org env var is configured so downstream org-scoping helpers
+            // always receive a non-empty string.
+            token.maintainerOrgId = maintainerOrg;
+          } else {
+            // No org env configured — assign the safe default so that API
+            // routes relying on session.user.maintainerOrgId never get
+            // undefined and can always perform a deterministic org-scope check.
+            token.maintainerOrgId = "default";
 
             // Resolve fine-grained RBAC role
             const role = await resolveRole(account.access_token, githubUsername);
@@ -259,6 +269,10 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.sub ?? "";
         session.user.githubUsername = token.githubUsername;
         session.user.isMaintainer = token.isMaintainer ?? false;
+        // Propagate the org identifier to session.user so that every server
+        // component and API route can access it from a typed field rather than
+        // reaching into the raw JWT or using an ad-hoc default string.
+        session.user.maintainerOrgId = token.maintainerOrgId ?? "default";
         session.user.role = token.role;
         session.user.maintainerOrgId = token.maintainerOrgId ?? "default";
         session.user.availableOrgs = token.availableOrgs ?? [];
